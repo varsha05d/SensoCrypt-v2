@@ -39,14 +39,13 @@ import kotlinx.coroutines.launch
 
 private enum class AuthPhase { DETAILS, OTP, LOADING }
 
-/** Phone-number signup/login (v2). OTP send + entry + verify happens on-device via
- * MSG91's Kotlin SDK (see Msg91PhoneAuth.kt); only the resulting access token goes to our
- * own backend's /auth/phone/{signup,login}, which verifies it server-side. */
+/** Phone-number signup/login (v2). OTP send + verify happens through our own backend, which
+ * proxies to MSG91 (see backend/app/core/msg91_auth.py) -- this screen never talks to any
+ * SMS provider directly, only to our /auth/phone/{send-otp,signup,login} endpoints. */
 @Composable
 fun AuthScreen(onAuthenticated: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val msg91Auth = remember { Msg91PhoneAuth() }
     val authApi = remember { AuthPhoneApi() }
     val userSession = remember { UserSession(context) }
 
@@ -72,8 +71,11 @@ fun AuthScreen(onAuthenticated: () -> Unit) {
         phase = AuthPhase.LOADING
         scope.launch {
             try {
-                msg91Auth.sendOtp(e164.removePrefix("+"))
+                authApi.sendOtp(e164)
                 phase = AuthPhase.OTP
+            } catch (e: AuthPhoneApiException) {
+                errorText = "Couldn't send code: ${e.body}"
+                phase = AuthPhase.DETAILS
             } catch (e: Exception) {
                 errorText = e.message ?: "Couldn't send code"
                 phase = AuthPhase.DETAILS
@@ -84,14 +86,14 @@ fun AuthScreen(onAuthenticated: () -> Unit) {
     fun verifyCode() {
         errorText = null
         phase = AuthPhase.LOADING
+        val e164 = phone.trim()
         val code = otp.trim()
         scope.launch {
             try {
-                val accessToken = msg91Auth.verifyOtp(code)
                 val response = if (isSignup) {
-                    authApi.signup(accessToken, name.trim(), email.trim())
+                    authApi.signup(e164, code, name.trim(), email.trim())
                 } else {
-                    authApi.login(accessToken)
+                    authApi.login(e164, code)
                 }
                 userSession.userId = response.user_id
                 userSession.authToken = response.token

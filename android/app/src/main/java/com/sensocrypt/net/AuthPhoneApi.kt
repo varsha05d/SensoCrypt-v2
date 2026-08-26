@@ -11,16 +11,16 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-@Serializable data class PhoneSignupRequest(val access_token: String, val name: String, val email: String)
-@Serializable data class PhoneLoginRequest(val access_token: String)
+@Serializable data class SendOtpRequest(val phone_number: String)
+@Serializable data class PhoneSignupRequest(val phone_number: String, val otp: String, val name: String, val email: String)
+@Serializable data class PhoneLoginRequest(val phone_number: String, val otp: String)
 @Serializable data class PhoneAuthResponse(val user_id: String, val token: String, val expires_in: Int)
 
 class AuthPhoneApiException(val httpCode: Int, val body: String) : Exception("HTTP $httpCode: $body")
 
-/** Talks to /api/v1/auth/phone/{signup,login}. The phone number's OTP was already sent
- * and verified on-device via MSG91's SDK (see auth/Msg91PhoneAuth.kt) before this is ever
- * called; what's sent here is the resulting MSG91 access token, which the backend verifies
- * server-side. */
+/** Talks to /api/v1/auth/phone/{send-otp,signup,login}. The OTP itself is sent and verified
+ * by our own backend via MSG91 (see backend/app/core/msg91_auth.py) -- this app never talks
+ * to MSG91 or sees anything beyond "code sent" / "code accepted or rejected". */
 class AuthPhoneApi(private val baseUrl: String = "$BACKEND_HTTP_SCHEME://$BACKEND_HOST/api/v1/auth/phone") {
     private val client = OkHttpClient()
     private val json = Json { ignoreUnknownKeys = true }
@@ -37,9 +37,12 @@ class AuthPhoneApi(private val baseUrl: String = "$BACKEND_HTTP_SCHEME://$BACKEN
             }
         }
 
-    suspend fun signup(accessToken: String, name: String, email: String): PhoneAuthResponse =
-        post("/signup", PhoneSignupRequest(accessToken, name, email))
+    suspend fun sendOtp(phoneNumber: String): OkResponse =
+        post("/send-otp", SendOtpRequest(phoneNumber))
 
-    suspend fun login(accessToken: String): PhoneAuthResponse =
-        post("/login", PhoneLoginRequest(accessToken))
+    suspend fun signup(phoneNumber: String, otp: String, name: String, email: String): PhoneAuthResponse =
+        post("/signup", PhoneSignupRequest(phoneNumber, otp, name, email))
+
+    suspend fun login(phoneNumber: String, otp: String): PhoneAuthResponse =
+        post("/login", PhoneLoginRequest(phoneNumber, otp))
 }
