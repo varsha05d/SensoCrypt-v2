@@ -64,7 +64,13 @@ class Settings(BaseSettings):
     # Service Accounts -> Generate new private key downloads), pasted whole into one env
     # var rather than a file path -- Render's environment tab is the natural place for a
     # secret like this, and it avoids needing to bake the file into the Docker image.
+    # Only used for Firebase Cloud Messaging (incoming-call push) now -- phone-number
+    # OTP auth goes through MSG91 instead (see msg91_auth_key below).
     firebase_service_account_json: str = ""
+
+    # MSG91 OTP authkey (control.msg91.com -> Settings -> Authkey), scoped to a
+    # Send-OTP/Manage-only custom rule.
+    msg91_auth_key: str = ""
 
 
 settings = Settings()

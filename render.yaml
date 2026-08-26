@@ -24,3 +24,5 @@ services:
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
+      - key: MSG91_AUTH_KEY
+        sync: false
