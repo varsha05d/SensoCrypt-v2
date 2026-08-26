@@ -1,57 +1,58 @@
-"""Server-side OTP send/verify via MSG91's OTP API.
+"""Server-side verification of MSG91 OTP Widget access tokens.
 
-Unlike Firebase Phone Auth, the OTP itself is generated and checked by MSG91 on our
-backend's behalf -- the Android app never talks to MSG91 directly; it only talks to our
-own /auth/phone/send-otp and /auth/phone/{signup,login} endpoints, which proxy to MSG91.
-Sending through our backend (rather than a client-side SDK) also means the authkey never
-ships inside the APK.
+OTP send + entry + verify happen entirely on-device via MSG91's Kotlin SDK
+(com.msg91.lib:sendotp), which uses MSG91's own default (non-DLT-registered) OTP
+template -- this backend never sends an OTP itself. What the app hands us afterward is
+the resulting access token (a JWT), which we verify server-side via MSG91's
+verifyAccessToken API before trusting the phone number it carries.
 """
+
+import base64
+import json
 
 import httpx
 
 from app.core.config import settings
 
-_BASE_URL = "https://control.msg91.com/api/v5/otp"
+_VERIFY_URL = "https://control.msg91.com/api/v5/widget/verifyAccessToken"
 
 
 class PhoneAuthError(Exception):
     pass
 
 
-def _mobile_for_msg91(phone_number: str) -> str:
-    # MSG91 expects the number without a leading "+" (e.g. "919876543210").
-    return phone_number.lstrip("+")
-
-
 def _require_auth_key() -> str:
     if not settings.msg91_auth_key:
-        raise RuntimeError(
-            "MSG91_AUTH_KEY is not set -- phone auth can't send or verify OTPs without it."
-        )
+        raise RuntimeError("MSG91_AUTH_KEY is not set -- phone auth can't verify tokens without it.")
     return settings.msg91_auth_key
 
 
-async def send_otp(phone_number: str) -> None:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            _BASE_URL,
-            params={"authkey": _require_auth_key(), "mobile": _mobile_for_msg91(phone_number)},
-        )
-    data = resp.json()
-    if data.get("type") != "success":
-        raise PhoneAuthError(f"MSG91 failed to send OTP: {data.get('message', data)}")
+def _decode_jwt_payload(token: str) -> dict:
+    try:
+        payload_b64 = token.split(".")[1]
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        return json.loads(base64.urlsafe_b64decode(padded))
+    except Exception as exc:  # noqa: BLE001 -- malformed/foreign token, all treated the same
+        raise PhoneAuthError(f"couldn't decode access token payload: {exc}") from exc
 
 
-async def verify_otp(phone_number: str, otp: str) -> None:
+async def verify_widget_access_token(access_token: str) -> str:
+    """Verifies a widget access token server-side (confirms MSG91 actually issued it,
+    rather than trusting an unverified client-decoded JWT) and returns the E.164 phone
+    number (leading '+') it was issued for."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
-            f"{_BASE_URL}/verify",
-            params={
-                "authkey": _require_auth_key(),
-                "mobile": _mobile_for_msg91(phone_number),
-                "otp": otp,
-            },
+            _VERIFY_URL,
+            headers={"Content-Type": "application/json"},
+            json={"authkey": _require_auth_key(), "access-token": access_token},
         )
     data = resp.json()
-    if data.get("type") != "success":
-        raise PhoneAuthError("incorrect or expired code")
+    if data.get("type") == "error":
+        raise PhoneAuthError(f"invalid or expired access token: {data.get('message', data)}")
+
+    claims = _decode_jwt_payload(access_token)
+    identifier = claims.get("identifier") or claims.get("mobile") or claims.get("phone")
+    if not identifier:
+        raise PhoneAuthError("access token does not carry a verified identifier")
+    identifier = str(identifier)
+    return identifier if identifier.startswith("+") else f"+{identifier}"

@@ -53,30 +53,20 @@ class KexResponse(BaseModel):
 # --- Phone auth (v2) -----------------------------------------------------------------
 
 
-class SendOtpRequest(BaseModel):
-    phone_number: str
-
-
 class PhoneSignupRequest(BaseModel):
-    phone_number: str
-    otp: str
+    access_token: str
     name: str
     email: str
 
 
 class PhoneLoginRequest(BaseModel):
-    phone_number: str
-    otp: str
+    access_token: str
 
 
 class PhoneAuthResponse(BaseModel):
     user_id: str
     token: str
     expires_in: int
-
-
-class OkResponse(BaseModel):
-    ok: bool
 
 
 class FcmTokenRequest(BaseModel):
