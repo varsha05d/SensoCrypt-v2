@@ -1,0 +1,33 @@
+# OS
+.DS_Store
+
+# IDE
+.idea/
+
+# Python
+backend/.venv/
+backend/**/__pycache__/
+backend/sensocrypt_v2_backend.egg-info/
+backend/.env
+*.pyc
+
+# Android / Gradle
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/.idea/
+*.iml
+
+# Release signing key -- this is the app's permanent identity; losing it means every
+# future update must ship as a fresh install rather than an update. Never committed.
+android/keystore/
+android/keystore.properties
+
+# Docker
+postgres_data/
+
+# Secrets that must never be committed -- shared with the backend via Render's env vars
+# and with the app via its own gitignored config, never as files in this repo.
+**/google-services.json
+**/*firebase*service-account*.json
