@@ -1,5 +1,6 @@
 package com.sensocrypt.auth
 
+import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -39,13 +42,15 @@ import kotlinx.coroutines.launch
 
 private enum class AuthPhase { DETAILS, OTP, LOADING }
 
-/** Phone-number signup/login (v2). OTP send + verify happens through our own backend, which
- * proxies to MSG91 (see backend/app/core/msg91_auth.py) -- this screen never talks to any
- * SMS provider directly, only to our /auth/phone/{send-otp,signup,login} endpoints. */
+/** Phone-number signup/login (v2). The OTP itself is sent and verified entirely by Firebase
+ * (FirebasePhoneAuth) -- this screen never sees or handles the actual SMS code beyond
+ * collecting what the user typed and handing it to Firebase; only the resulting ID token
+ * goes to our own backend. */
 @Composable
 fun AuthScreen(onAuthenticated: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val firebaseAuth = remember { FirebasePhoneAuth() }
     val authApi = remember { AuthPhoneApi() }
     val userSession = remember { UserSession(context) }
 
@@ -56,6 +61,33 @@ fun AuthScreen(onAuthenticated: () -> Unit) {
     var otp by remember { mutableStateOf("") }
     var phase by remember { mutableStateOf(AuthPhase.DETAILS) }
     var errorText by remember { mutableStateOf<String?>(null) }
+
+    fun completeWithFirebaseToken(idToken: String) {
+        phase = AuthPhase.LOADING
+        scope.launch {
+            try {
+                val response = if (isSignup) {
+                    authApi.signup(idToken, name.trim(), email.trim())
+                } else {
+                    authApi.login(idToken)
+                }
+                userSession.userId = response.user_id
+                userSession.authToken = response.token
+                userSession.name = name.trim().ifBlank { null }
+                onAuthenticated()
+            } catch (e: AuthPhoneApiException) {
+                errorText = when (e.httpCode) {
+                    409 -> "An account already exists for this number -- try Log In instead"
+                    404 -> "No account for this number yet -- try Sign Up instead"
+                    else -> "Something went wrong: ${e.body}"
+                }
+                phase = AuthPhase.OTP
+            } catch (e: Exception) {
+                errorText = e.message ?: "Something went wrong"
+                phase = AuthPhase.OTP
+            }
+        }
+    }
 
     fun sendCode() {
         errorText = null
@@ -69,46 +101,37 @@ fun AuthScreen(onAuthenticated: () -> Unit) {
             return
         }
         phase = AuthPhase.LOADING
-        scope.launch {
-            try {
-                authApi.sendOtp(e164)
-                phase = AuthPhase.OTP
-            } catch (e: AuthPhoneApiException) {
-                errorText = "Couldn't send code: ${e.body}"
+        firebaseAuth.sendOtp(
+            phoneNumber = e164,
+            activity = context as Activity,
+            onCodeSent = { phase = AuthPhase.OTP },
+            onAutoVerified = { credential ->
+                scope.launch {
+                    try {
+                        val idToken = firebaseAuth.signInWithCredential(credential)
+                        completeWithFirebaseToken(idToken)
+                    } catch (e: Exception) {
+                        errorText = e.message ?: "Verification failed"
+                        phase = AuthPhase.DETAILS
+                    }
+                }
+            },
+            onError = { message ->
+                errorText = message
                 phase = AuthPhase.DETAILS
-            } catch (e: Exception) {
-                errorText = e.message ?: "Couldn't send code"
-                phase = AuthPhase.DETAILS
-            }
-        }
+            },
+        )
     }
 
     fun verifyCode() {
         errorText = null
         phase = AuthPhase.LOADING
-        val e164 = phone.trim()
-        val code = otp.trim()
         scope.launch {
             try {
-                val response = if (isSignup) {
-                    authApi.signup(e164, code, name.trim(), email.trim())
-                } else {
-                    authApi.login(e164, code)
-                }
-                userSession.userId = response.user_id
-                userSession.authToken = response.token
-                userSession.name = name.trim().ifBlank { null }
-                onAuthenticated()
-            } catch (e: AuthPhoneApiException) {
-                errorText = when (e.httpCode) {
-                    401 -> "Incorrect or expired code -- try again"
-                    409 -> "An account already exists for this number -- try Log In instead"
-                    404 -> "No account for this number yet -- try Sign Up instead"
-                    else -> "Something went wrong: ${e.body}"
-                }
-                phase = AuthPhase.OTP
+                val idToken = firebaseAuth.verifyOtp(otp.trim())
+                completeWithFirebaseToken(idToken)
             } catch (e: Exception) {
-                errorText = e.message ?: "Something went wrong"
+                errorText = "Incorrect code -- try again"
                 phase = AuthPhase.OTP
             }
         }

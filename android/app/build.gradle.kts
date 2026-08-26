@@ -115,11 +115,12 @@ dependencies {
     // maintained fork, API-compatible, same org.webrtc.* package names).
     implementation("io.getstream:stream-webrtc-android:1.3.10")
 
-    // Incoming-call push notifications (v2). Phone OTP auth goes through our own backend
-    // + MSG91 instead of Firebase Auth -- only the messaging artifact is needed here.
+    // Phone OTP auth + incoming-call push notifications (v2). BOM pins compatible versions
+    // for both.
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-messaging-ktx")
-    // .await() on Firebase's Task<T> APIs (FirebaseMessaging.getInstance().token)
+    // .await() on Firebase's Task<T> APIs (signInWithCredential, getIdToken)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
