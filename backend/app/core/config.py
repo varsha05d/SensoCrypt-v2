@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     auth_nonce_ttl_s: int = 60
     session_token_ttl_s: int = 300
 
+    # Separate from session_token_ttl_s above (that one's for the short-lived device/
+    # telemetry session token) -- this is the human "you're logged in" token from phone
+    # OTP auth, which should survive far longer than 5 minutes between app opens.
+    user_session_token_ttl_s: int = 30 * 24 * 3600  # 30 days
+
     # PASETO v4.local symmetric key, 32 raw bytes, hex-encoded. Generate with:
     #   python -c "import secrets; print(secrets.token_hex(32))"
     paseto_local_key_hex: str = ""

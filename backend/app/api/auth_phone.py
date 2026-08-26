@@ -33,8 +33,8 @@ async def phone_signup(body: PhoneSignupRequest, db: AsyncSession = Depends(get_
     db.add(user)
     await db.commit()
 
-    token = crypto.issue_user_token(str(user.user_id))
-    return PhoneAuthResponse(user_id=str(user.user_id), token=token, expires_in=settings.session_token_ttl_s)
+    token = crypto.issue_user_token(str(user.user_id), ttl_s=settings.user_session_token_ttl_s)
+    return PhoneAuthResponse(user_id=str(user.user_id), token=token, expires_in=settings.user_session_token_ttl_s)
 
 
 @router.post("/login", response_model=PhoneAuthResponse)
@@ -48,5 +48,5 @@ async def phone_login(body: PhoneLoginRequest, db: AsyncSession = Depends(get_db
     if user is None:
         raise HTTPException(status_code=404, detail="no account for this phone number -- sign up first")
 
-    token = crypto.issue_user_token(str(user.user_id))
-    return PhoneAuthResponse(user_id=str(user.user_id), token=token, expires_in=settings.session_token_ttl_s)
+    token = crypto.issue_user_token(str(user.user_id), ttl_s=settings.user_session_token_ttl_s)
+    return PhoneAuthResponse(user_id=str(user.user_id), token=token, expires_in=settings.user_session_token_ttl_s)
