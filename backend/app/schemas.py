@@ -100,3 +100,7 @@ class SessionKeyRequest(BaseModel):
 
 class SessionKeyResponse(BaseModel):
     wrapped_key_b64: str | None  # None if not verified yet -- caller should keep polling
+
+
+class CallStatusResponse(BaseModel):
+    state: str

@@ -14,6 +14,8 @@ import okio.ByteString
 class TelemetrySocket(
     private val sessionId: String,
     private val quick: Boolean = false,
+    private val callId: String? = null,
+    private val side: String? = null,
     private val baseWsUrl: String = "$BACKEND_WS_SCHEME://$BACKEND_HOST",
 ) {
     private val client = OkHttpClient()
@@ -23,7 +25,12 @@ class TelemetrySocket(
     val lastVerdict: StateFlow<String> = _lastVerdict
 
     fun connect() {
-        val suffix = if (quick) "?quick=1" else ""
+        val params = buildList {
+            if (quick) add("quick=1")
+            if (callId != null) add("call_id=$callId")
+            if (side != null) add("side=$side")
+        }
+        val suffix = if (params.isEmpty()) "" else "?" + params.joinToString("&")
         val request = Request.Builder().url("$baseWsUrl/ws/telemetry/$sessionId$suffix").build()
         webSocket = client.newWebSocket(
             request,

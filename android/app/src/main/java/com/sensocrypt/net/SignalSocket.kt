@@ -38,6 +38,7 @@ class SignalSocket(private val callId: String, private val baseWsUrl: String = "
                     val message = when (code) {
                         4409 -> "This call already has two people in it"
                         4410 -> "This call has already ended"
+                        4412 -> "Verification failed or timed out"
                         else -> return
                     }
                     _messages.tryEmit("""{"type":"error","message":"$message"}""")

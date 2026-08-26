@@ -18,6 +18,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 @Serializable data class AcceptCallResponse(val ok: Boolean, val verify_window_s: Double)
 @Serializable data class SessionKeyRequest(val session_id: String, val side: String)
 @Serializable data class SessionKeyResponse(val wrapped_key_b64: String? = null)
+@Serializable data class CallStatusResponse(val state: String)
 @Serializable
 data class CallLogEntry(
     val call_id: String,
@@ -82,6 +83,12 @@ class CallsApi(private val baseUrl: String = "$BACKEND_HTTP_SCHEME://$BACKEND_HO
 
     suspend fun acceptCall(callId: String, authToken: String): AcceptCallResponse =
         postEmpty("/calls/$callId/accept", authToken)
+
+    suspend fun declineCall(callId: String, authToken: String): OkResponse =
+        postEmpty("/calls/$callId/decline", authToken)
+
+    suspend fun getCallStatus(callId: String, authToken: String): CallStatusResponse =
+        get("/calls/$callId/status", authToken)
 
     /** No auth token needed -- the shared key is gated on call_coordinator's own
      * verification state server-side, not on who's asking (see backend's docstring). */

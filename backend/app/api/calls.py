@@ -23,6 +23,7 @@ from app.db.models import Call, User
 from app.db.session import get_db
 from app.schemas import (
     CallLogEntry,
+    CallStatusResponse,
     FcmTokenRequest,
     PlaceCallRequest,
     PlaceCallResponse,
@@ -104,6 +105,46 @@ async def accept_call(
     await db.commit()
     call_coordinator.start_window(call_id)
     return {"ok": True, "verify_window_s": call_coordinator.VERIFY_WINDOW_S}
+
+
+@router.get("/calls/{call_id}/status", response_model=CallStatusResponse)
+async def get_call_status(
+    call_id: str,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> CallStatusResponse:
+    """Polled by the caller while on the ringing screen -- there's no push notification
+    for "the callee accepted", so this is how the caller learns to move on to its own
+    liveness capture (state flips RINGING -> VERIFYING) or that the call was declined/
+    ended without ever being answered."""
+    try:
+        call_uuid = uuid.UUID(call_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="unknown call") from exc
+    call = await db.get(Call, call_uuid)
+    if call is None or user_id not in (call.caller_user_id, call.callee_user_id):
+        raise HTTPException(status_code=404, detail="unknown call")
+    return CallStatusResponse(state=call.state)
+
+
+@router.post("/calls/{call_id}/decline")
+async def decline_call(
+    call_id: str,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        call_uuid = uuid.UUID(call_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="unknown call") from exc
+    call = await db.get(Call, call_uuid)
+    if call is None or call.callee_user_id != user_id:
+        raise HTTPException(status_code=404, detail="unknown call")
+    if call.state != "RINGING":
+        raise HTTPException(status_code=409, detail=f"call is not ringing (state={call.state})")
+    call.state = "DECLINED"
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/calls/{call_id}/session-key", response_model=SessionKeyResponse)

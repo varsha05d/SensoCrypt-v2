@@ -1,6 +1,7 @@
 package com.sensocrypt
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
@@ -35,6 +37,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -61,12 +64,18 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.sensocrypt.auth.AuthScreen
-import com.sensocrypt.call.CallScreen
+import com.sensocrypt.call.CallLogsScreen
+import com.sensocrypt.call.ConnectedCallScreen
+import com.sensocrypt.call.DialerScreen
+import com.sensocrypt.call.IncomingCallScreen
+import com.sensocrypt.call.VerifyScreen
 import com.sensocrypt.crypto.KeystoreManager
 import com.sensocrypt.identity.IdentityStore
 import com.sensocrypt.identity.UserSession
 import com.sensocrypt.net.AuthApi
 import com.sensocrypt.net.CallsApi
+import com.sensocrypt.push.EXTRA_INCOMING_CALLER_NAME
+import com.sensocrypt.push.EXTRA_INCOMING_CALL_ID
 import com.sensocrypt.ui.theme.SensoCryptTheme
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
@@ -74,32 +83,59 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
+data class IncomingCallExtras(val callId: String, val callerName: String)
+
+private fun extractIncomingCall(intent: Intent?): IncomingCallExtras? {
+    val callId = intent?.getStringExtra(EXTRA_INCOMING_CALL_ID) ?: return null
+    val callerName = intent.getStringExtra(EXTRA_INCOMING_CALLER_NAME) ?: "Unknown"
+    return IncomingCallExtras(callId, callerName)
+}
+
 class MainActivity : ComponentActivity() {
+    // Compose State (not a plain var) so a re-tap on the incoming-call notification -- which
+    // hits onNewIntent, not a fresh onCreate, since launchMode="singleTop" -- recomposes
+    // AppRoot with the new call instead of being silently dropped.
+    private var pendingIncomingCall by mutableStateOf<IncomingCallExtras?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingIncomingCall = extractIncomingCall(intent)
 
         setContent {
             SensoCryptTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    AppRoot()
+                    AppRoot(
+                        pendingIncomingCall = pendingIncomingCall,
+                        onConsumedIncomingCall = { pendingIncomingCall = null },
+                    )
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingIncomingCall = extractIncomingCall(intent)
+    }
+}
+
+private sealed class Screen {
+    object Home : Screen()
+    object Dialer : Screen()
+    object Logs : Screen()
+    data class Incoming(val callId: String, val callerName: String) : Screen()
+    data class Verifying(val callId: String, val side: String) : Screen()
+    data class Connected(val callId: String) : Screen()
 }
 
 @Composable
-private fun AppRoot() {
+private fun AppRoot(pendingIncomingCall: IncomingCallExtras?, onConsumedIncomingCall: () -> Unit) {
     val context = LocalContext.current
     val userSession = remember { UserSession(context) }
     var loggedIn by remember { mutableStateOf(userSession.isLoggedIn) }
-    var showCall by remember { mutableStateOf(false) }
+    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
 
-    // Registers this device's push token with the backend every time we have a logged-in
-    // session available -- covers both "just logged in" and "app relaunched while already
-    // logged in" (a token can also rotate on its own; onNewToken in
-    // push/SensoCryptMessagingService.kt handles that case independently).
     LaunchedEffect(loggedIn) {
         if (loggedIn) {
             val authToken = userSession.authToken ?: return@LaunchedEffect
@@ -112,12 +148,19 @@ private fun AppRoot() {
         }
     }
 
-    // CameraX (this screen's preview) and WebRTC's own capturer (the call screen) cannot
-    // both hold the front camera at once -- explicitly release CameraX's binding before
-    // handing the camera to WebRTC. CallScreen's own DisposableEffect releases WebRTC's
-    // capturer on the way back out, letting CameraX rebind normally.
-    LaunchedEffect(showCall) {
-        if (showCall) {
+    LaunchedEffect(pendingIncomingCall, loggedIn) {
+        if (loggedIn && pendingIncomingCall != null) {
+            screen = Screen.Incoming(pendingIncomingCall.callId, pendingIncomingCall.callerName)
+            onConsumedIncomingCall()
+        }
+    }
+
+    // CameraX (home screen preview) and WebRTC's / VerifyScreen's own camera pipelines
+    // cannot all hold the front camera at once -- explicitly release CameraX's binding
+    // before handing the camera off. Both VerifyScreen and ConnectedCallScreen release
+    // whatever they bind on their own way out, letting CameraX rebind normally back on Home.
+    LaunchedEffect(screen) {
+        if (screen is Screen.Verifying || screen is Screen.Connected) {
             val provider = withContext(Dispatchers.IO) { ProcessCameraProvider.getInstance(context).get() }
             provider.unbindAll()
         }
@@ -125,10 +168,33 @@ private fun AppRoot() {
 
     if (!loggedIn) {
         AuthScreen(onAuthenticated = { loggedIn = true })
-    } else if (showCall) {
-        CallScreen(onExit = { showCall = false })
-    } else {
-        HomeScreen(onStartCall = { showCall = true })
+        return
+    }
+
+    when (val s = screen) {
+        Screen.Home -> HomeScreen(
+            onStartCall = { screen = Screen.Dialer },
+            onShowLogs = { screen = Screen.Logs },
+        )
+        Screen.Dialer -> DialerScreen(
+            onCallAccepted = { callId -> screen = Screen.Verifying(callId, "caller") },
+            onExit = { screen = Screen.Home },
+        )
+        Screen.Logs -> CallLogsScreen(onBack = { screen = Screen.Home })
+        is Screen.Incoming -> IncomingCallScreen(
+            callId = s.callId,
+            callerName = s.callerName,
+            onAccepted = { screen = Screen.Verifying(s.callId, "callee") },
+            onDeclinedOrError = { screen = Screen.Home },
+        )
+        is Screen.Verifying -> VerifyScreen(
+            callId = s.callId,
+            side = s.side,
+            onVerified = { screen = Screen.Connected(s.callId) },
+            onFailed = { screen = Screen.Home },
+            onCancel = { screen = Screen.Home },
+        )
+        is Screen.Connected -> ConnectedCallScreen(callId = s.callId, onExit = { screen = Screen.Home })
     }
 }
 
@@ -140,7 +206,7 @@ private enum class SetupState { CHECKING, ENROLLING, READY, FAILED }
  * lock set, no StrongBox, etc.) a plain retry screen explains what to do.
  */
 @Composable
-fun HomeScreen(onStartCall: () -> Unit) {
+fun HomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val keystoreManager = remember { KeystoreManager(context) }
@@ -177,7 +243,7 @@ fun HomeScreen(onStartCall: () -> Unit) {
     when (setupState) {
         SetupState.CHECKING, SetupState.ENROLLING -> SetupScreen()
         SetupState.FAILED -> SetupFailedScreen(message = setupError, onRetry = { runEnrollment() })
-        SetupState.READY -> VerifiedHomeScreen(onStartCall = onStartCall)
+        SetupState.READY -> VerifiedHomeScreen(onStartCall = onStartCall, onShowLogs = onShowLogs)
     }
 }
 
@@ -226,15 +292,11 @@ private fun SetupFailedScreen(message: String, onRetry: () -> Unit) {
     }
 }
 
-/**
- * The app's only real action: start a video call. Liveness verification happens
- * automatically and continuously once a call connects (both sides score themselves and
- * broadcast the result to each other, see CallScreen) -- that's the actual threat model
- * (is the OTHER person on the call real), so there's no separate "verify yourself" step
- * to trigger on this screen.
- */
+/** The app's home screen: place a call by phone number, or review past calls (with likely-
+ * fraud attempts flagged) in Call Logs. Liveness verification now runs BEFORE a call
+ * connects (see VerifyScreen), not continuously during it. */
 @Composable
-private fun VerifiedHomeScreen(onStartCall: () -> Unit) {
+private fun VerifiedHomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit) {
     val context = LocalContext.current
 
     var hasCameraPermission by remember {
@@ -289,11 +351,18 @@ private fun VerifiedHomeScreen(onStartCall: () -> Unit) {
             }
         }
 
-        Column(
-            modifier = Modifier.fillMaxWidth().systemBarsPadding().padding(top = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Row(
+            modifier = Modifier.fillMaxWidth().systemBarsPadding().padding(top = 16.dp, start = 16.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             AppHeader()
+            IconButton(
+                onClick = onShowLogs,
+                modifier = Modifier.clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = 0.35f)),
+            ) {
+                Icon(Icons.Filled.History, contentDescription = "Call Logs", tint = Color.White)
+            }
         }
 
         if (hasCameraPermission) {
@@ -314,7 +383,7 @@ private fun VerifiedHomeScreen(onStartCall: () -> Unit) {
                     Icon(Icons.Filled.Videocam, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        "Start Video Call",
+                        "Call by Phone Number",
                         fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimary,

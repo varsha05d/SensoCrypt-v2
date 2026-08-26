@@ -1,0 +1,250 @@
+package com.sensocrypt.call
+
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import com.sensocrypt.net.SignalSocket
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import org.webrtc.EglBase
+import org.webrtc.IceCandidate
+import org.webrtc.SessionDescription
+import org.webrtc.SurfaceViewRenderer
+
+private val CALL_PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+
+/**
+ * The actual WebRTC call, reached only once both sides have already passed pre-connect
+ * liveness verification (VerifyScreen) -- unlike v1's CallScreen, there's no in-call liveness
+ * loop here anymore; that already happened. This is purely offer/answer/ICE relay + media.
+ */
+@Composable
+fun ConnectedCallScreen(callId: String, onExit: () -> Unit) {
+    val context = LocalContext.current
+    var hasPermissions by remember {
+        mutableStateOf(CALL_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED })
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results -> hasPermissions = results.values.all { it } }
+
+    LaunchedEffect(Unit) {
+        if (!hasPermissions) permissionLauncher.launch(CALL_PERMISSIONS)
+    }
+
+    if (!hasPermissions) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(28.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "SensoCrypt needs camera and microphone access to make a video call.",
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { permissionLauncher.launch(CALL_PERMISSIONS) }) { Text("Grant permissions") }
+            }
+        }
+        return
+    }
+
+    ConnectedCallScreenContent(callId = callId, onExit = onExit)
+}
+
+@Composable
+private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var endedMessage by remember { mutableStateOf<String?>(null) }
+    var offerSent by remember { mutableStateOf(false) }
+    var signalReady by remember { mutableStateOf(false) }
+
+    val eglBase = remember { EglBase.create() }
+    val webRtcSession = remember { WebRtcSession(context, eglBase) }
+    val signalSocket = remember { SignalSocket(callId) }
+
+    val localRenderer = remember { SurfaceViewRenderer(context) }
+    val remoteRenderer = remember { SurfaceViewRenderer(context).apply { init(eglBase.eglBaseContext, null) } }
+
+    fun sendSignal(json: JSONObject) {
+        signalSocket.send(json.toString())
+    }
+
+    fun endCall() {
+        sendSignal(JSONObject().apply { put("type", "end") })
+        onExit()
+    }
+
+    fun sendOfferOnce() {
+        if (offerSent) return
+        offerSent = true
+        webRtcSession.createOffer { offer ->
+            sendSignal(JSONObject().apply { put("type", "offer"); put("sdp", offer.description) })
+        }
+    }
+
+    LaunchedEffect(callId) {
+        webRtcSession.onIceCandidate = { candidate ->
+            sendSignal(
+                JSONObject().apply {
+                    put("type", "ice")
+                    put("candidate", candidate.sdp)
+                    put("sdpMid", candidate.sdpMid)
+                    put("sdpMLineIndex", candidate.sdpMLineIndex)
+                },
+            )
+        }
+        webRtcSession.onRemoteVideoTrack = { track -> track.addSink(remoteRenderer) }
+
+        webRtcSession.start(localRenderer)
+        signalSocket.connect()
+
+        scope.launch {
+            signalSocket.messages.collect { raw ->
+                val json = try { JSONObject(raw) } catch (e: Exception) { return@collect }
+                when (json.optString("type")) {
+                    "offer" -> {
+                        webRtcSession.setRemoteDescription(SessionDescription(SessionDescription.Type.OFFER, json.getString("sdp")))
+                        webRtcSession.createAnswer { answer ->
+                            sendSignal(JSONObject().apply { put("type", "answer"); put("sdp", answer.description) })
+                        }
+                    }
+                    "answer" -> {
+                        webRtcSession.setRemoteDescription(SessionDescription(SessionDescription.Type.ANSWER, json.getString("sdp")))
+                    }
+                    "ready" -> {
+                        if (json.optString("role") == "offerer") {
+                            signalReady = true
+                            sendOfferOnce()
+                        }
+                    }
+                    "ice" -> {
+                        webRtcSession.addIceCandidate(
+                            IceCandidate(json.getString("sdpMid"), json.getInt("sdpMLineIndex"), json.getString("candidate")),
+                        )
+                    }
+                    "end" -> endedMessage = "The other person ended the call."
+                    "error" -> endedMessage = json.optString("message", "Couldn't connect the call.")
+                }
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            webRtcSession.close()
+            signalSocket.close()
+            localRenderer.release()
+            remoteRenderer.release()
+            eglBase.release()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(modifier = Modifier.fillMaxSize(), factory = { remoteRenderer })
+
+        IconButton(
+            onClick = { endCall() },
+            modifier = Modifier.align(Alignment.TopStart).systemBarsPadding().padding(12.dp)
+                .clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)),
+        ) {
+            Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+        }
+
+        VerifiedBadge(modifier = Modifier.align(Alignment.TopCenter).systemBarsPadding().padding(top = 12.dp))
+
+        AndroidView(
+            modifier = Modifier
+                .size(110.dp, 150.dp)
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(14.dp)),
+            factory = { localRenderer },
+        )
+
+        IconButton(
+            onClick = { endCall() },
+            modifier = Modifier.align(Alignment.BottomCenter).systemBarsPadding().padding(bottom = 16.dp)
+                .size(64.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error),
+        ) {
+            Icon(Icons.Filled.CallEnd, contentDescription = "End call", tint = Color.White, modifier = Modifier.size(28.dp))
+        }
+
+        endedMessage?.let { message -> CallEndedOverlayView(message = message, onBackToHome = onExit) }
+    }
+}
+
+@Composable
+private fun VerifiedBadge(modifier: Modifier = Modifier) {
+    androidx.compose.foundation.layout.Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF1B4332).copy(alpha = 0.9f))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Icon(Icons.Filled.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Verified — secure call", color = Color.White, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+private fun CallEndedOverlayView(message: String, onBackToHome: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)), contentAlignment = Alignment.Center) {
+        Column(modifier = Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Filled.CallEnd, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(40.dp))
+            Spacer(Modifier.height(12.dp))
+            Text(message, color = Color.White, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = onBackToHome) { Text("Back to Home") }
+        }
+    }
+}

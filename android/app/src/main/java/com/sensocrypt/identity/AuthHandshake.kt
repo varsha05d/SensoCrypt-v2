@@ -15,7 +15,7 @@ import com.sensocrypt.net.AuthApi
 import com.sensocrypt.net.ChallengeResponse
 import com.sensocrypt.net.SessionApi
 
-data class HandshakeResult(val challenge: ChallengeResponse, val kTel: ByteArray)
+data class HandshakeResult(val challenge: ChallengeResponse, val kTel: ByteArray, val kChal: ByteArray)
 
 /**
  * Runs /auth/challenge -> sign -> /auth/verify -> /session/kex (plan.md §4.3, §4.4).
@@ -49,7 +49,7 @@ suspend fun authenticateAndKex(
     val kexResp = sessionApi.kex(chal.session_id, Base64.encodeToString(ephemeral.publicRaw, Base64.NO_WRAP))
     val epkS = Base64.decode(kexResp.epk_s_b64, Base64.NO_WRAP)
     val shared = x25519Agree(ephemeral.private, epkS)
-    val (kTel, _) = deriveSessionKeys(shared, chal.session_id)
+    val (kTel, kChal) = deriveSessionKeys(shared, chal.session_id)
 
-    return HandshakeResult(chal, kTel)
+    return HandshakeResult(chal, kTel, kChal)
 }
