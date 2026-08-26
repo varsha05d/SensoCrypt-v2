@@ -19,7 +19,7 @@ services:
       - key: PASETO_LOCAL_KEY_HEX
         sync: false
       - key: ANDROID_PACKAGE
-        value: com.sensocrypt
+        value: com.sensocrypt.v2
       - key: PINNED_SIGNING_CERT_DIGESTS_HEX
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
