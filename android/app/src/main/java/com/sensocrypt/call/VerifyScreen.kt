@@ -61,8 +61,6 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 
 private const val TELEMETRY_CHUNK_INTERVAL_MS = 500L
-private const val CLIENT_P_TRUST = 0.35
-private const val SESSION_KEY_POLL_INTERVAL_MS = 1_000L
 // A little past the backend's own 30s window (call_coordinator.VERIFY_WINDOW_S) so a
 // same-length client timeout doesn't race a legitimate last-second server verdict.
 private const val OVERALL_TIMEOUT_MS = 35_000L
@@ -193,10 +191,15 @@ private fun VerifyScreenContent(
                 }
 
                 val json = try { JSONObject(ws.lastVerdict.value) } catch (e: Exception) { null }
-                val p = json?.optDouble("p_trust", -1.0) ?: -1.0
                 val trustState = json?.optString("trust_state", "")
                 Log.d("SensoCrypt", "VerifyScreen[$side]: verdict raw=${ws.lastVerdict.value}")
-                if (!reachedTrusted && (p >= CLIENT_P_TRUST || trustState == "TRUSTED")) {
+                // Must match the backend's own gate exactly (app/api/telemetry.py only calls
+                // call_coordinator.mark_verified() when trust_state == "TRUSTED", not on any
+                // softer p_trust threshold) -- showing "Verified" here on a looser condition
+                // than what the server actually accepts just means polling for the session
+                // key spins until the window times out, since the server never marked this
+                // side verified in the first place.
+                if (!reachedTrusted && trustState == "TRUSTED") {
                     reachedTrusted = true
                     statusText = "Verified — waiting for the other person…"
                 }
