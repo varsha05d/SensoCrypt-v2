@@ -156,11 +156,14 @@ private fun AppRoot(pendingIncomingCall: IncomingCallExtras?, onConsumedIncoming
     }
 
     // CameraX (home screen preview) and WebRTC's / VerifyScreen's own camera pipelines
-    // cannot all hold the front camera at once -- explicitly release CameraX's binding
-    // before handing the camera off. Both VerifyScreen and ConnectedCallScreen release
-    // whatever they bind on their own way out, letting CameraX rebind normally back on Home.
+    // cannot both hold the front camera at once -- explicitly release CameraX's binding
+    // before handing the camera to WebRTC's own (non-CameraX) capturer. VerifyScreen is
+    // NOT included here: it manages its own CameraX bind/unbind internally, and this effect
+    // racing with VerifyScreen's own bind (both fire async on entering that screen) could
+    // unbind VerifyScreen's just-created analysis use case out from under it, leaving the
+    // camera "bound" but producing zero frames for the rest of the verification window.
     LaunchedEffect(screen) {
-        if (screen is Screen.Verifying || screen is Screen.Connected) {
+        if (screen is Screen.Connected) {
             val provider = withContext(Dispatchers.IO) { ProcessCameraProvider.getInstance(context).get() }
             provider.unbindAll()
         }
