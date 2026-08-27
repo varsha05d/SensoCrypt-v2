@@ -3,6 +3,7 @@ package com.sensocrypt.call
 import android.Manifest
 import android.content.pm.PackageManager
 import android.util.Base64
+import android.util.Log
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -164,6 +165,7 @@ private fun VerifyScreenContent(
         try {
             val handshake = authenticateAndKex(context, deviceId, keystoreManager, authApi, sessionApi, keyguardLauncher)
             val sessionId = handshake.challenge.session_id
+            Log.i("SensoCrypt", "VerifyScreen[$side]: handshake OK, session_id=$sessionId, callId=$callId")
             val ws = TelemetrySocket(sessionId, quick = true, callId = callId, side = side)
             ws.connect()
             liveStreamer.start()
@@ -185,11 +187,15 @@ private fun VerifyScreenContent(
                     val plaintext = buildTelemetryChunkJson(chunk)
                     val encrypted = encryptTelemetryChunk(handshake.kTel, sessionId, chunk.seq, plaintext)
                     ws.send(encrypted)
+                    Log.d("SensoCrypt", "VerifyScreen[$side]: sent chunk seq=${chunk.seq} frames=${chunk.frames.size} gyro=${chunk.gyro.size}")
+                } else {
+                    Log.d("SensoCrypt", "VerifyScreen[$side]: chunk seq=${chunk.seq} had 0 frames -- camera not producing frames yet")
                 }
 
                 val json = try { JSONObject(ws.lastVerdict.value) } catch (e: Exception) { null }
                 val p = json?.optDouble("p_trust", -1.0) ?: -1.0
                 val trustState = json?.optString("trust_state", "")
+                Log.d("SensoCrypt", "VerifyScreen[$side]: verdict raw=${ws.lastVerdict.value}")
                 if (!reachedTrusted && (p >= CLIENT_P_TRUST || trustState == "TRUSTED")) {
                     reachedTrusted = true
                     statusText = "Verified — waiting for the other person…"
@@ -210,8 +216,10 @@ private fun VerifyScreenContent(
             }
 
             ws.close()
+            Log.w("SensoCrypt", "VerifyScreen[$side]: timed out, reachedTrusted=$reachedTrusted")
             settle { onFailed(if (reachedTrusted) "The other person couldn't be verified in time" else "Couldn't verify it's really you in time") }
         } catch (e: Exception) {
+            Log.e("SensoCrypt", "VerifyScreen[$side]: failed", e)
             settle { onFailed(e.message ?: "Verification failed") }
         }
     }
@@ -275,7 +283,12 @@ private fun VerifyCameraFeed(
                 .build()
             analysis.setAnalyzer(executor, FrameCapture(synchronizer, onFrame))
             provider.unbindAll()
-            provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
+            try {
+                provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
+                Log.i("SensoCrypt", "VerifyScreen: camera bound OK")
+            } catch (e: Exception) {
+                Log.e("SensoCrypt", "VerifyScreen: camera bind failed", e)
+            }
         }
         cameraProviderFuture.addListener(listener, ContextCompat.getMainExecutor(context))
         onDispose {
