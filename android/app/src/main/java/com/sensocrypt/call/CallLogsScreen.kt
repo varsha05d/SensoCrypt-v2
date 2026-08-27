@@ -111,7 +111,7 @@ fun CallLogsScreen(onBack: () -> Unit) {
 private enum class VerifyStatus { VERIFIED, NOT_VERIFIED, PENDING }
 
 private fun verifyStatusOf(state: String): VerifyStatus = when (state) {
-    "CONNECTED", "ENDED" -> VerifyStatus.VERIFIED
+    "VERIFIED", "CONNECTED", "ENDED" -> VerifyStatus.VERIFIED
     "FAILED_VERIFICATION" -> VerifyStatus.NOT_VERIFIED
     else -> VerifyStatus.PENDING // RINGING (no answer), VERIFYING, DECLINED
 }

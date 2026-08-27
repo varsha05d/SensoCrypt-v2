@@ -9,7 +9,10 @@ a process restart, and a restart only happens after 15 minutes of total inactivi
 """
 
 import asyncio
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 VERIFY_WINDOW_S = 30.0
 _SIDES = ("caller", "callee")
@@ -36,6 +39,27 @@ def start_window(call_id: str) -> None:
         asyncio.create_task(_enforce_timeout(call_id))
 
 
+async def _set_call_state_in_db(call_id: str, state: str) -> None:
+    """Updates the Call row directly, independent of whether either client ever connects
+    to /ws/signal/{call_id} -- a call that fails verification is never supposed to reach
+    signaling at all (that's the whole point of the gate), so signal.py's own
+    _set_call_state can't be relied on to record FAILED_VERIFICATION; nothing else would
+    ever flip Call.state off "VERIFYING", leaving fraud attempts permanently mislabeled in
+    Call Logs."""
+    try:
+        from app.db.models import Call
+        from app.db.session import async_session
+
+        async with async_session() as db:
+            call = await db.get(Call, call_id)
+            if call is None:
+                return
+            call.state = state
+            await db.commit()
+    except Exception:  # noqa: BLE001 -- call_id may not be a real Call row in ad-hoc testing
+        logger.exception("failed to update Call %s to state %s", call_id, state)
+
+
 async def _enforce_timeout(call_id: str) -> None:
     state = _calls[call_id]
     remaining = state.deadline_monotonic - time.monotonic()
@@ -44,6 +68,7 @@ async def _enforce_timeout(call_id: str) -> None:
     if state.outcome is None:
         state.outcome = "failed"
         state.on_settled.set()
+        await _set_call_state_in_db(call_id, "FAILED_VERIFICATION")
 
 
 def mark_verified(call_id: str, side: str) -> None:
@@ -59,6 +84,7 @@ def mark_verified(call_id: str, side: str) -> None:
     if len(state.verified_sides) == len(_SIDES):
         state.outcome = "verified"
         state.on_settled.set()
+        asyncio.create_task(_set_call_state_in_db(call_id, "VERIFIED"))
 
 
 async def wait_for_outcome(call_id: str) -> str:
