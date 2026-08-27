@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
@@ -69,6 +70,7 @@ import com.sensocrypt.call.ConnectedCallScreen
 import com.sensocrypt.call.DialerScreen
 import com.sensocrypt.call.IncomingCallScreen
 import com.sensocrypt.call.VerifyScreen
+import com.sensocrypt.profile.ProfileScreen
 import com.sensocrypt.crypto.KeystoreManager
 import com.sensocrypt.identity.IdentityStore
 import com.sensocrypt.identity.UserSession
@@ -124,6 +126,7 @@ private sealed class Screen {
     object Home : Screen()
     object Dialer : Screen()
     object Logs : Screen()
+    object Profile : Screen()
     data class Incoming(val callId: String, val callerName: String) : Screen()
     data class Verifying(val callId: String, val side: String) : Screen()
     data class Connected(val callId: String) : Screen()
@@ -178,12 +181,17 @@ private fun AppRoot(pendingIncomingCall: IncomingCallExtras?, onConsumedIncoming
         Screen.Home -> HomeScreen(
             onStartCall = { screen = Screen.Dialer },
             onShowLogs = { screen = Screen.Logs },
+            onShowProfile = { screen = Screen.Profile },
         )
         Screen.Dialer -> DialerScreen(
             onCallAccepted = { callId -> screen = Screen.Verifying(callId, "caller") },
             onExit = { screen = Screen.Home },
         )
         Screen.Logs -> CallLogsScreen(onBack = { screen = Screen.Home })
+        Screen.Profile -> ProfileScreen(
+            onBack = { screen = Screen.Home },
+            onLoggedOut = { screen = Screen.Home; loggedIn = false },
+        )
         is Screen.Incoming -> IncomingCallScreen(
             callId = s.callId,
             callerName = s.callerName,
@@ -209,7 +217,7 @@ private enum class SetupState { CHECKING, ENROLLING, READY, FAILED }
  * lock set, no StrongBox, etc.) a plain retry screen explains what to do.
  */
 @Composable
-fun HomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit) {
+fun HomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit, onShowProfile: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val keystoreManager = remember { KeystoreManager(context) }
@@ -246,7 +254,7 @@ fun HomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit) {
     when (setupState) {
         SetupState.CHECKING, SetupState.ENROLLING -> SetupScreen()
         SetupState.FAILED -> SetupFailedScreen(message = setupError, onRetry = { runEnrollment() })
-        SetupState.READY -> VerifiedHomeScreen(onStartCall = onStartCall, onShowLogs = onShowLogs)
+        SetupState.READY -> VerifiedHomeScreen(onStartCall = onStartCall, onShowLogs = onShowLogs, onShowProfile = onShowProfile)
     }
 }
 
@@ -299,7 +307,7 @@ private fun SetupFailedScreen(message: String, onRetry: () -> Unit) {
  * fraud attempts flagged) in Call Logs. Liveness verification now runs BEFORE a call
  * connects (see VerifyScreen), not continuously during it. */
 @Composable
-private fun VerifiedHomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit) {
+private fun VerifiedHomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit, onShowProfile: () -> Unit) {
     val context = LocalContext.current
 
     var hasCameraPermission by remember {
@@ -360,11 +368,20 @@ private fun VerifiedHomeScreen(onStartCall: () -> Unit, onShowLogs: () -> Unit) 
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AppHeader()
-            IconButton(
-                onClick = onShowLogs,
-                modifier = Modifier.clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = 0.35f)),
-            ) {
-                Icon(Icons.Filled.History, contentDescription = "Call Logs", tint = Color.White)
+            Row {
+                IconButton(
+                    onClick = onShowLogs,
+                    modifier = Modifier.clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = 0.35f)),
+                ) {
+                    Icon(Icons.Filled.History, contentDescription = "Call Logs", tint = Color.White)
+                }
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = onShowProfile,
+                    modifier = Modifier.clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = 0.35f)),
+                ) {
+                    Icon(Icons.Filled.Person, contentDescription = "Profile", tint = Color.White)
+                }
             }
         }
 

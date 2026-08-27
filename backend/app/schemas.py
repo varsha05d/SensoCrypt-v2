@@ -104,3 +104,10 @@ class SessionKeyResponse(BaseModel):
 
 class CallStatusResponse(BaseModel):
     state: str
+
+
+class UserProfileResponse(BaseModel):
+    user_id: str
+    name: str
+    email: str
+    phone_number: str

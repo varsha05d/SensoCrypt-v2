@@ -30,10 +30,24 @@ from app.schemas import (
     PlaceCallResponse,
     SessionKeyRequest,
     SessionKeyResponse,
+    UserProfileResponse,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["calls"])
+
+
+@router.get("/users/me", response_model=UserProfileResponse)
+async def get_my_profile(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> UserProfileResponse:
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="unknown user")
+    return UserProfileResponse(
+        user_id=str(user.user_id), name=user.name, email=user.email, phone_number=user.phone_number
+    )
 
 
 @router.post("/users/me/fcm-token")
