@@ -60,7 +60,12 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
-private const val TELEMETRY_CHUNK_INTERVAL_MS = 500L
+// Faster than the in-call continuous-reporting loop's 500ms (CallScreen.kt) -- this is a
+// bounded, time-critical pre-connect check (30s server-side window), so sending more often
+// re-evaluates the backend's sliding WINDOW_S=2.0s analysis window more frequently, giving
+// DWELL_TRUST's "3 consecutive good readings" more chances per second to be satisfied in
+// wall-clock time, without changing how much actual motion evidence is required.
+private const val TELEMETRY_CHUNK_INTERVAL_MS = 300L
 // A little past the backend's own 30s window (call_coordinator.VERIFY_WINDOW_S) so a
 // same-length client timeout doesn't race a legitimate last-second server verdict.
 private const val OVERALL_TIMEOUT_MS = 35_000L
