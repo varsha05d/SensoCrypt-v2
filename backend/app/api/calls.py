@@ -9,6 +9,7 @@ creating the Call row, and triggering the push.
 """
 
 import base64
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,7 @@ from app.schemas import (
     SessionKeyResponse,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["calls"])
 
 
@@ -67,13 +69,22 @@ async def place_call(
 
     if callee.fcm_token:
         _get_app()  # ensures firebase_admin is initialized before messaging.send()
-        messaging.send(
-            messaging.Message(
-                token=callee.fcm_token,
-                data={"type": "incoming_call", "call_id": str(call.call_id), "caller_name": caller.name},
-                android=messaging.AndroidConfig(priority="high"),
+        try:
+            message_id = messaging.send(
+                messaging.Message(
+                    token=callee.fcm_token,
+                    data={"type": "incoming_call", "call_id": str(call.call_id), "caller_name": caller.name},
+                    android=messaging.AndroidConfig(priority="high"),
+                )
             )
-        )
+            logger.info("call %s: FCM push sent to callee %s (message_id=%s)", call.call_id, callee.user_id, message_id)
+        except Exception:
+            # A bad/expired token (uninstalled app, token rotated) shouldn't fail placing the
+            # call -- it just means this call rings nowhere, same as having no token on file.
+            # Logged so a real delivery problem is diagnosable instead of silently invisible.
+            logger.exception("call %s: FCM push to callee %s failed", call.call_id, callee.user_id)
+    else:
+        logger.info("call %s: callee %s has no fcm_token on file, nothing to push", call.call_id, callee.user_id)
     # No fcm_token on file for the callee: the call row still exists (shows as a missed/
     # unreachable call in logs) but nothing rings on their end. Not raising an error here --
     # a caller shouldn't be able to tell whether a number has the app installed or not.
