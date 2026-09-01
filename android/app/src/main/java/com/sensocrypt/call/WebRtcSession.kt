@@ -51,6 +51,7 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
 
     var onIceCandidate: ((IceCandidate) -> Unit)? = null
     var onRemoteVideoTrack: ((VideoTrack) -> Unit)? = null
+    var onRemoteAudioTrack: ((AudioTrack) -> Unit)? = null
 
     init {
         PeerConnectionFactory.initialize(
@@ -115,8 +116,11 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
                 }
 
                 override fun onTrack(transceiver: RtpTransceiver?) {
-                    val track = transceiver?.receiver?.track()
-                    if (track is VideoTrack) onRemoteVideoTrack?.invoke(track)
+                    when (val track = transceiver?.receiver?.track()) {
+                        is VideoTrack -> onRemoteVideoTrack?.invoke(track)
+                        is AudioTrack -> onRemoteAudioTrack?.invoke(track)
+                        else -> Unit
+                    }
                 }
 
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
