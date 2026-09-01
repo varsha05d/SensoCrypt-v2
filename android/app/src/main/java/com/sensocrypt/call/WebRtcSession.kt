@@ -1,6 +1,7 @@
 package com.sensocrypt.call
 
 import android.content.Context
+import android.media.AudioManager
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
@@ -42,6 +43,11 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
     private val factory: PeerConnectionFactory
     private var peerConnection: PeerConnection? = null
     private var videoCapturer: VideoCapturer? = null
+    // Without this, the call's audio comes out the earpiece (barely audible held away
+    // from the ear during a video call) instead of the loudspeaker -- MODE_IN_COMMUNICATION
+    // is what tells Android this is a VoIP-style call so isSpeakerphoneOn actually routes
+    // audio there instead of being ignored under MODE_NORMAL.
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     var onIceCandidate: ((IceCandidate) -> Unit)? = null
     var onRemoteVideoTrack: ((VideoTrack) -> Unit)? = null
@@ -128,6 +134,12 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
 
         peerConnection?.addTrack(videoTrack, listOf("stream0"))
         peerConnection?.addTrack(audioTrack, listOf("stream0"))
+
+        // Route audio to the loudspeaker, not the earpiece -- placed after camera/video
+        // setup above (not before) to avoid the resource-contention timing issue that broke
+        // video capture the first time this was tried in v1.
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.isSpeakerphoneOn = true
     }
 
     fun createOffer(onCreated: (SessionDescription) -> Unit) {
@@ -169,6 +181,8 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
         videoCapturer?.dispose()
         peerConnection?.close()
         peerConnection?.dispose()
+        audioManager.isSpeakerphoneOn = false
+        audioManager.mode = AudioManager.MODE_NORMAL
     }
 
     private fun createFrontCameraCapturer(): VideoCapturer? {
