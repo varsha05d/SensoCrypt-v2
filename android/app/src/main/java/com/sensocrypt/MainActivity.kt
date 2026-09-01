@@ -205,7 +205,11 @@ private fun AppRoot(pendingIncomingCall: IncomingCallExtras?, onConsumedIncoming
             onFailed = { screen = Screen.Home },
             onCancel = { screen = Screen.Home },
         )
-        is Screen.Connected -> ConnectedCallScreen(callId = s.callId, onExit = { screen = Screen.Home })
+        is Screen.Connected -> ConnectedCallScreen(
+            callId = s.callId,
+            authToken = userSession.authToken,
+            onExit = { screen = Screen.Home },
+        )
     }
 }
 

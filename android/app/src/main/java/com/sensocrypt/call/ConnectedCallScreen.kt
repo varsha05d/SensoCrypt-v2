@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.sensocrypt.net.SignalSocket
+import com.sensocrypt.net.VoiceApi
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.webrtc.EglBase
@@ -59,13 +62,17 @@ import org.webrtc.SurfaceViewRenderer
 
 private val CALL_PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
 
+/** Latest AI-vs-human verdict on the other party's voice (see VoiceDetectionRecorder) --
+ * null until the first ~4-second window has been analyzed. */
+private data class VoiceVerdict(val label: String, val confidence: Double)
+
 /**
  * The actual WebRTC call, reached only once both sides have already passed pre-connect
  * liveness verification (VerifyScreen) -- unlike v1's CallScreen, there's no in-call liveness
  * loop here anymore; that already happened. This is purely offer/answer/ICE relay + media.
  */
 @Composable
-fun ConnectedCallScreen(callId: String, onExit: () -> Unit) {
+fun ConnectedCallScreen(callId: String, authToken: String?, onExit: () -> Unit) {
     val context = LocalContext.current
     var hasPermissions by remember {
         mutableStateOf(CALL_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED })
@@ -98,11 +105,11 @@ fun ConnectedCallScreen(callId: String, onExit: () -> Unit) {
         return
     }
 
-    ConnectedCallScreenContent(callId = callId, onExit = onExit)
+    ConnectedCallScreenContent(callId = callId, authToken = authToken, onExit = onExit)
 }
 
 @Composable
-private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
+private fun ConnectedCallScreenContent(callId: String, authToken: String?, onExit: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -112,6 +119,7 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
     var isMuted by remember { mutableStateOf(false) }
     // Which video is the big one -- tapping the small picture-in-picture view swaps them.
     var mainIsLocal by remember { mutableStateOf(false) }
+    var voiceVerdict by remember { mutableStateOf<VoiceVerdict?>(null) }
 
     val eglBase = remember { EglBase.create() }
     val webRtcSession = remember { WebRtcSession(context, eglBase) }
@@ -149,6 +157,30 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
             )
         }
         webRtcSession.onRemoteVideoTrack = { track -> track.addSink(remoteRenderer) }
+        webRtcSession.onRemoteAudioTrack = { track ->
+            var windowSeq = 0
+            var latestAppliedSeq = 0
+            val recorder = VoiceDetectionRecorder { wavBytes ->
+                val seq = ++windowSeq
+                scope.launch {
+                    val token = authToken ?: return@launch
+                    try {
+                        val result = VoiceApi().detect(wavBytes, token)
+                        // A slow request can finish after a later window's -- don't let a
+                        // stale result overwrite a fresher one.
+                        if (seq >= latestAppliedSeq) {
+                            latestAppliedSeq = seq
+                            voiceVerdict = VoiceVerdict(result.label, result.confidence)
+                        }
+                    } catch (e: Exception) {
+                        // Best-effort, continuous background check -- one failed window
+                        // (e.g. a cold Cloud Run start, or a network blip) shouldn't
+                        // interrupt the call or clear the last known verdict.
+                    }
+                }
+            }
+            track.addSink(recorder)
+        }
 
         webRtcSession.start(localRenderer)
         signalSocket.connect()
@@ -224,7 +256,14 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
             Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
         }
 
-        VerifiedBadge(modifier = Modifier.align(Alignment.TopCenter).systemBarsPadding().padding(top = 12.dp))
+        Column(
+            modifier = Modifier.align(Alignment.TopCenter).systemBarsPadding().padding(top = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            VerifiedBadge()
+            Spacer(Modifier.height(8.dp))
+            VoiceDetectionBadge(verdict = voiceVerdict)
+        }
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -277,6 +316,30 @@ private fun VerifiedBadge(modifier: Modifier = Modifier) {
         Icon(Icons.Filled.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
         Text("Verified — secure call", color = Color.White, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+/** Live AI-vs-human badge for the other party's voice, updated roughly every ~4 seconds
+ * throughout the call as VoiceDetectionRecorder finishes each window. */
+@Composable
+private fun VoiceDetectionBadge(verdict: VoiceVerdict?, modifier: Modifier = Modifier) {
+    val (background, icon, label) = when {
+        verdict == null -> Triple(Color(0xFF3A3A3A).copy(alpha = 0.9f), null, "Analyzing voice…")
+        verdict.label == "human" -> Triple(Color(0xFF1B4332).copy(alpha = 0.9f), Icons.Filled.RecordVoiceOver, "Human voice")
+        else -> Triple(Color(0xFF7A1F1F).copy(alpha = 0.9f), Icons.Filled.Warning, "AI voice detected")
+    }
+    androidx.compose.foundation.layout.Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(background)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
     }
 }
 
