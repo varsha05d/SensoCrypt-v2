@@ -9,6 +9,7 @@ from app.api.calls import router as calls_router
 from app.api.session import router as session_router
 from app.api.signal import router as signal_router
 from app.api.telemetry import router as telemetry_router
+from app.api.voice import router as voice_router
 from app.db.models import Base
 from app.db.session import engine
 
@@ -31,6 +32,7 @@ app.include_router(calls_router)
 app.include_router(session_router)
 app.include_router(signal_router)
 app.include_router(telemetry_router)
+app.include_router(voice_router)
 
 
 @app.get("/health")

@@ -71,5 +71,12 @@ class Settings(BaseSettings):
     # secret like this, and it avoids needing to bake the file into the Docker image.
     firebase_service_account_json: str = ""
 
+    # Voice-detection feature (voice-detection branch only). Inference itself runs on a
+    # separate Google Cloud Run service, not here -- RawNet2 + torch measure ~671MB RSS
+    # at runtime, more than this backend's entire 512MB Render free-tier budget. This
+    # backend just proxies the uploaded audio to that service and relays its verdict.
+    voice_service_url: str = ""
+    voice_service_api_key: str = ""
+
 
 settings = Settings()
