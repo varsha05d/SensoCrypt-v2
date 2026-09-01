@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Local dev only cleartext exception, see net/BackendConfig.kt's comment. Needed only
+  when BACKEND_HOST there is pointed at a local dev backend over plain http (e.g. while
+  testing the voice-detection feature against a Mac's LAN IP plus docker-compose). Every
+  other domain still requires HTTPS, and this file has no effect at all once
+  BackendConfig.kt is pointed back at the deployed https backend for a release build.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.1.3</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
