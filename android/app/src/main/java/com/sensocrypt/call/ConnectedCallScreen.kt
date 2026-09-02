@@ -160,27 +160,23 @@ private fun ConnectedCallScreenContent(callId: String, authToken: String?, onExi
         webRtcSession.onRemoteVideoTrack = { track -> track.addSink(remoteRenderer) }
         webRtcSession.onRemoteAudioTrack = { track ->
             Log.i("SensoCrypt", "voice detection: remote audio track attached, arming recorder")
-            var windowSeq = 0
-            var latestAppliedSeq = 0
+            // ONE check on the first ~5 seconds of the call, not continuous -- see
+            // VoiceDetectionRecorder's docstring for why. VoiceDetectionRecorder only ever
+            // calls this once (hasEmitted guards further onData processing), so there's no
+            // need to guard against a later window's result overwriting an earlier one.
             val recorder = VoiceDetectionRecorder { wavBytes ->
-                val seq = ++windowSeq
                 scope.launch {
                     val token = authToken ?: return@launch
                     try {
                         val result = VoiceApi().detect(wavBytes, token)
-                        Log.i("SensoCrypt", "voice detection: window #$seq -> ${result.label} (${result.confidence})")
-                        // A slow request can finish after a later window's -- don't let a
-                        // stale result overwrite a fresher one.
-                        if (seq >= latestAppliedSeq) {
-                            latestAppliedSeq = seq
-                            voiceVerdict = VoiceVerdict(result.label, result.confidence)
-                        }
+                        Log.i("SensoCrypt", "voice detection: ${result.label} (${result.confidence})")
+                        voiceVerdict = VoiceVerdict(result.label, result.confidence)
                     } catch (e: Exception) {
-                        // Best-effort, continuous background check -- one failed window
-                        // (e.g. a cold Cloud Run start, or a network blip) shouldn't
-                        // interrupt the call or clear the last known verdict. Still logged
-                        // so a failure mode is visible in logcat instead of invisible.
-                        Log.w("SensoCrypt", "voice detection: window #$seq failed: ${e.message}")
+                        // Best-effort -- a failed check (e.g. a cold Cloud Run start, or a
+                        // network blip) shouldn't interrupt the call, just leave the badge
+                        // showing "Analyzing...". Still logged so the failure is visible in
+                        // logcat instead of invisible.
+                        Log.w("SensoCrypt", "voice detection failed: ${e.message}")
                     }
                 }
             }
