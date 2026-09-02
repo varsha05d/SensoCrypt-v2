@@ -17,7 +17,9 @@ package com.sensocrypt.net
 // voice-detection branch's own Render service -- separate from main's
 // sensocrypt-v2-backend.onrender.com, so this in-progress feature never touches the
 // working production backend. See render.yaml's sensocrypt-v2-backend-voicedetect.
-const val BACKEND_HOST = "sensocrypt-v2-backend-voicedetect.onrender.com"
+// Render appended its own disambiguating suffix to the hostname (the plain name was
+// unavailable) -- this is the actual assigned URL, not the predictable one.
+const val BACKEND_HOST = "sensocrypt-v2-backend-voicedetect-t1lg.onrender.com"
 const val BACKEND_HTTP_SCHEME = "https"
 const val BACKEND_WS_SCHEME = "wss"
 
