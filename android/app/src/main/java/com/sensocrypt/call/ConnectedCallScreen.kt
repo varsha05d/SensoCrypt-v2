@@ -2,6 +2,7 @@ package com.sensocrypt.call
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -150,6 +151,7 @@ private fun ConnectedCallScreenContent(callId: String, authToken: String?, onExi
         }
         webRtcSession.onRemoteVideoTrack = { track -> track.addSink(remoteRenderer) }
         webRtcSession.onRemoteAudioTrack = { track ->
+            Log.i("SensoCrypt", "voice detection: remote audio track attached, arming recorder")
             var windowSeq = 0
             var latestAppliedSeq = 0
             val recorder = VoiceDetectionRecorder { wavBytes ->
@@ -158,6 +160,7 @@ private fun ConnectedCallScreenContent(callId: String, authToken: String?, onExi
                     val token = authToken ?: return@launch
                     try {
                         val result = VoiceApi().detect(wavBytes, token)
+                        Log.i("SensoCrypt", "voice detection: window #$seq -> ${result.label} (${result.confidence})")
                         // A slow request can finish after a later window's -- don't let a
                         // stale result overwrite a fresher one.
                         if (seq >= latestAppliedSeq) {
@@ -167,7 +170,9 @@ private fun ConnectedCallScreenContent(callId: String, authToken: String?, onExi
                     } catch (e: Exception) {
                         // Best-effort, continuous background check -- one failed window
                         // (e.g. a cold Cloud Run start, or a network blip) shouldn't
-                        // interrupt the call or clear the last known verdict.
+                        // interrupt the call or clear the last known verdict. Still logged
+                        // so a failure mode is visible in logcat instead of invisible.
+                        Log.w("SensoCrypt", "voice detection: window #$seq failed: ${e.message}")
                     }
                 }
             }

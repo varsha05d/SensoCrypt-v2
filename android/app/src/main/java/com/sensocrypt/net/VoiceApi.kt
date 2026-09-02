@@ -25,9 +25,14 @@ class VoiceApiException(val httpCode: Int, val body: String) : Exception("HTTP $
  * only; nothing on `main` calls this.
  */
 class VoiceApi(private val baseUrl: String = "$BACKEND_HTTP_SCHEME://$BACKEND_HOST/api/v1") {
+    // Measured cold: a scale-to-zero Cloud Run instance pulling its image + downloading
+    // the model can take the backend's own httpx call the better part of a minute to
+    // return -- a tighter client timeout here just means the request silently never
+    // shows a result (observed directly during testing: the backend's own call to Cloud
+    // Run succeeded well within its 60s budget, but this client had already given up).
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         .build()
     private val json = Json { ignoreUnknownKeys = true }
 

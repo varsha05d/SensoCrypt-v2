@@ -1,11 +1,17 @@
 databases:
-  - name: sensocrypt-v2-db
+  - name: sensocrypt-v2-voicedetect-db
     plan: free
     postgresMajorVersion: "16"
 
 services:
+  # A separate service + database from main's sensocrypt-v2-backend / sensocrypt-v2-db --
+  # deliberately isolated so the in-progress voice-detection branch can never touch the
+  # working production backend main relies on. Deploy this by pointing a NEW Render
+  # Blueprint instance at the voice-detection branch specifically (not by re-running the
+  # existing production blueprint), so Render creates these as their own resources rather
+  # than trying to reconcile them against the production ones of the same name.
   - type: web
-    name: sensocrypt-v2-backend
+    name: sensocrypt-v2-backend-voicedetect
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
@@ -14,7 +20,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: sensocrypt-v2-db
+          name: sensocrypt-v2-voicedetect-db
           property: connectionString
       - key: PASETO_LOCAL_KEY_HEX
         sync: false
@@ -23,4 +29,10 @@ services:
       - key: PINNED_SIGNING_CERT_DIGESTS_HEX
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      # Points at the separate Cloud Run inference service (voice-service/), not deployed
+      # through this repo -- see voice-service/README.md for its own deploy command.
+      - key: VOICE_SERVICE_URL
+        sync: false
+      - key: VOICE_SERVICE_API_KEY
         sync: false

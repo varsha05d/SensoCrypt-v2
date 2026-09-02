@@ -2,6 +2,7 @@ package com.sensocrypt.call
 
 import android.content.Context
 import android.media.AudioManager
+import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
@@ -116,7 +117,9 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
                 }
 
                 override fun onTrack(transceiver: RtpTransceiver?) {
-                    when (val track = transceiver?.receiver?.track()) {
+                    val track = transceiver?.receiver?.track()
+                    Log.i("SensoCrypt", "onTrack: kind=${track?.kind()} id=${track?.id()}")
+                    when (track) {
                         is VideoTrack -> onRemoteVideoTrack?.invoke(track)
                         is AudioTrack -> onRemoteAudioTrack?.invoke(track)
                         else -> Unit
