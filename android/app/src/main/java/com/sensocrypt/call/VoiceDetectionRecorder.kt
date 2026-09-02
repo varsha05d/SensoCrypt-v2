@@ -13,18 +13,22 @@ import java.nio.ByteOrder
  * voice): WebRtcSession.onRemoteAudioTrack hands us the incoming AudioTrack, and
  * addSink(this) below is how it starts feeding onData() here.
  *
- * Buffers a single fixed-length window and emits it as a 16-bit PCM WAV clip via
- * onWindowReady -- ONE check at the start of the call, not continuous. (An earlier version
- * of this ran repeatedly throughout the call; the model's accuracy on real compressed call
- * audio wasn't reliable enough for a continuously-flickering badge to be useful -- one
- * check on the first few seconds is a deliberate, simpler scope, at the cost of not
- * noticing if the voice on the line changes partway through the call.) onData() runs on
- * WebRTC's own audio thread -- onWindowReady must return quickly (hand off to a coroutine
- * for the actual network call) or it'll stall audio delivery.
+ * Buffers a fixed-length window and emits it as a 16-bit PCM WAV clip via onWindowReady --
+ * up to maxTries times, at the start of the call, not continuous throughout it. The caller
+ * decides whether a given try was conclusive: call stop() as soon as a try comes back
+ * "human" (no need to check further), and just let a "ai_generated" try fall through to
+ * the next one automatically (up to maxTries) -- a single AI-flagged window is exactly the
+ * kind of false positive real testing showed this model produces on real compressed call
+ * audio, so requiring it to say so more than once (or reaching the try limit) is a
+ * deliberate way to cut down on those false alarms.
+ *
+ * onData() runs on WebRTC's own audio thread -- onWindowReady must return quickly (hand
+ * off to a coroutine for the actual network call) or it'll stall audio delivery.
  */
 class VoiceDetectionRecorder(
     private val windowSeconds: Double = 5.0,
-    private val onWindowReady: (ByteArray) -> Unit,
+    private val maxTries: Int = 3,
+    private val onWindowReady: (tryNumber: Int, wavBytes: ByteArray) -> Unit,
 ) : AudioTrackSink {
     private var buffer = ByteArrayOutputStream()
     private var sampleRate = -1
@@ -32,7 +36,14 @@ class VoiceDetectionRecorder(
     private var channels = -1
     private var targetSamples = 0
     private var samplesBuffered = 0
-    private var hasEmitted = false
+    private var triesEmitted = 0
+    @Volatile private var stopped = false
+
+    /** Called by the caller once a try's result makes further checking pointless (a
+     * "human" verdict) -- prevents any further windows from being buffered/emitted. */
+    fun stop() {
+        stopped = true
+    }
 
     override fun onData(
         data: ByteBuffer,
@@ -42,7 +53,7 @@ class VoiceDetectionRecorder(
         numberOfFrames: Int,
         absoluteCaptureTimestampMs: Long,
     ) {
-        if (hasEmitted) return
+        if (stopped || triesEmitted >= maxTries) return
 
         if (sampleRate != this.sampleRate || bitsPerSample != this.bitsPerSample || numberOfChannels != this.channels) {
             // First call, or the remote format changed mid-call (renegotiation) -- restart
@@ -66,10 +77,11 @@ class VoiceDetectionRecorder(
         samplesBuffered += numberOfFrames
 
         if (samplesBuffered >= targetSamples) {
-            hasEmitted = true
-            Log.i("SensoCrypt", "VoiceDetectionRecorder: window ready, ${buffer.size()} bytes / $samplesBuffered samples")
-            onWindowReady(toWav(buffer.toByteArray(), sampleRate, bitsPerSample, channels))
-            buffer = ByteArrayOutputStream() // release the buffer now that it's no longer needed
+            triesEmitted++
+            Log.i("SensoCrypt", "VoiceDetectionRecorder: try #$triesEmitted ready, ${buffer.size()} bytes / $samplesBuffered samples")
+            onWindowReady(triesEmitted, toWav(buffer.toByteArray(), sampleRate, bitsPerSample, channels))
+            buffer = ByteArrayOutputStream()
+            samplesBuffered = 0
         }
     }
 
