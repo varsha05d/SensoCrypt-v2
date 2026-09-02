@@ -1,15 +1,15 @@
-databases:
-  - name: sensocrypt-v2-voicedetect-db
-    plan: free
-    postgresMajorVersion: "16"
-
 services:
-  # A separate service + database from main's sensocrypt-v2-backend / sensocrypt-v2-db --
-  # deliberately isolated so the in-progress voice-detection branch can never touch the
-  # working production backend main relies on. Deploy this by pointing a NEW Render
-  # Blueprint instance at the voice-detection branch specifically (not by re-running the
-  # existing production blueprint), so Render creates these as their own resources rather
-  # than trying to reconcile them against the production ones of the same name.
+  # A separate service from main's sensocrypt-v2-backend -- deliberately isolated so the
+  # in-progress voice-detection branch can never touch the working production backend main
+  # relies on. Deploy this by pointing a NEW Render Blueprint instance at the
+  # voice-detection branch specifically (not by re-running the existing production
+  # blueprint), so Render creates it as its own resource rather than trying to reconcile it
+  # against the production one of the same name.
+  #
+  # No `databases:` block here -- Render's free tier allows only one free Postgres per
+  # account, and main's sensocrypt-v2-db already uses it. DATABASE_URL below is set
+  # manually instead, pointed at a free external Postgres (e.g. a Neon.tech free-tier
+  # project) so this test service still never touches production data.
   - type: web
     name: sensocrypt-v2-backend-voicedetect
     runtime: docker
@@ -19,9 +19,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: sensocrypt-v2-voicedetect-db
-          property: connectionString
+        sync: false
       - key: PASETO_LOCAL_KEY_HEX
         sync: false
       - key: ANDROID_PACKAGE
