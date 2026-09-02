@@ -8,6 +8,11 @@
     <!-- Incoming-call push notifications (Android 13+ requires this to be requested at
          runtime too, not just declared here). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Without this, Android 14+ silently denies SensoCryptMessagingService's
+         setFullScreenIntent() (used so an incoming call rings/shows over the lock screen
+         even when the app isn't open); the notification itself may still post, but never
+         as the full-screen ringing UI the calling flow depends on. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-feature android:name="android.hardware.camera.any" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="true" />

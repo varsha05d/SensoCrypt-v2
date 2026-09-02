@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Base64
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -144,9 +145,12 @@ private fun AppRoot(pendingIncomingCall: IncomingCallExtras?, onConsumedIncoming
             val authToken = userSession.authToken ?: return@LaunchedEffect
             try {
                 val token = FirebaseMessaging.getInstance().token.await()
+                Log.i("SensoCrypt", "FCM: got token (len=${token.length}), registering with backend")
                 CallsApi().setFcmToken(token, authToken)
+                Log.i("SensoCrypt", "FCM: token registered with backend OK")
             } catch (e: Exception) {
                 // Best-effort -- see onNewToken's comment for what this failure mode means.
+                Log.w("SensoCrypt", "FCM: token fetch/registration failed: ${e.message}", e)
             }
         }
     }

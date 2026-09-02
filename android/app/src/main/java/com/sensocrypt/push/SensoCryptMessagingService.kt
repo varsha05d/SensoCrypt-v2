@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -28,22 +29,36 @@ const val EXTRA_INCOMING_CALLER_NAME = "incoming_caller_name"
 class SensoCryptMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
+        Log.i("SensoCrypt", "FCM: onNewToken (len=${token.length})")
         val session = UserSession(applicationContext)
-        val authToken = session.authToken ?: return  // not logged in yet -- registered on next login instead
+        val authToken = session.authToken ?: run {
+            Log.i("SensoCrypt", "FCM: onNewToken, not logged in yet -- will register on next login instead")
+            return
+        }
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 CallsApi().setFcmToken(token, authToken)
+                Log.i("SensoCrypt", "FCM: onNewToken, registered with backend OK")
             } catch (e: Exception) {
                 // Best-effort: a stale FCM token just means this device won't ring for the
                 // next call until the app is opened again (which re-registers on launch).
+                Log.w("SensoCrypt", "FCM: onNewToken, registration failed: ${e.message}", e)
             }
         }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        if (message.data["type"] != "incoming_call") return
-        val callId = message.data["call_id"] ?: return
+        Log.i("SensoCrypt", "FCM: onMessageReceived, data=${message.data}, from=${message.from}")
+        if (message.data["type"] != "incoming_call") {
+            Log.w("SensoCrypt", "FCM: onMessageReceived, ignoring -- type != incoming_call")
+            return
+        }
+        val callId = message.data["call_id"] ?: run {
+            Log.w("SensoCrypt", "FCM: onMessageReceived, ignoring -- missing call_id")
+            return
+        }
         val callerName = message.data["caller_name"] ?: "Unknown"
+        Log.i("SensoCrypt", "FCM: showing incoming call notification for callId=$callId")
         showIncomingCallNotification(callId, callerName)
     }
 
