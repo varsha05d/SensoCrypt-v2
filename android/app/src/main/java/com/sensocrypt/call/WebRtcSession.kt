@@ -6,6 +6,7 @@ import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
+import org.webrtc.CameraVideoCapturer
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
@@ -44,6 +45,8 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
     private val factory: PeerConnectionFactory
     private var peerConnection: PeerConnection? = null
     private var videoCapturer: VideoCapturer? = null
+    private var localAudioTrack: AudioTrack? = null
+    private var isFrontCamera = true
     // Without this, the call's audio comes out the earpiece (barely audible held away
     // from the ear during a video call) instead of the loudspeaker -- MODE_IN_COMMUNICATION
     // is what tells Android this is a VoIP-style call so isSpeakerphoneOn actually routes
@@ -85,6 +88,7 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
 
         val audioSource: AudioSource = factory.createAudioSource(MediaConstraints())
         val audioTrack: AudioTrack = factory.createAudioTrack("audio0", audioSource)
+        localAudioTrack = audioTrack
 
         // STUN alone only works when at least one side's NAT allows a direct hole-punch --
         // fine on the same LAN, but two phones on two different home/mobile networks often
@@ -149,6 +153,32 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
         audioManager.isSpeakerphoneOn = true
     }
 
+    /** Mutes/unmutes the LOCAL mic -- disabling the outgoing audio track stops sending audio
+     * without tearing down or renegotiating the connection (the other side just receives
+     * silence), which is simpler and faster than removing/re-adding the track. */
+    fun setMuted(muted: Boolean) {
+        localAudioTrack?.setEnabled(!muted)
+    }
+
+    /** Flips between front and back camera. The Camera2 capturer WebRTC hands back from
+     * Camera2Enumerator already implements CameraVideoCapturer, which has this built in --
+     * no need to tear down and recreate the video track/capturer ourselves. */
+    fun switchCamera(onDone: (isFrontCamera: Boolean) -> Unit = {}) {
+        val capturer = videoCapturer as? CameraVideoCapturer ?: return
+        capturer.switchCamera(
+            object : CameraVideoCapturer.CameraSwitchHandler {
+                override fun onCameraSwitchDone(isFront: Boolean) {
+                    isFrontCamera = isFront
+                    onDone(isFront)
+                }
+
+                override fun onCameraSwitchError(error: String?) {
+                    Log.w("SensoCrypt", "switchCamera failed: $error")
+                }
+            },
+        )
+    }
+
     fun createOffer(onCreated: (SessionDescription) -> Unit) {
         peerConnection?.createOffer(
             object : SdpObserverAdapter() {
@@ -188,6 +218,7 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
         videoCapturer?.dispose()
         peerConnection?.close()
         peerConnection?.dispose()
+        localAudioTrack = null
         audioManager.isSpeakerphoneOn = false
         audioManager.mode = AudioManager.MODE_NORMAL
     }
