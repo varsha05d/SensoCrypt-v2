@@ -54,6 +54,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.sensocrypt.net.SignalSocket
 import com.sensocrypt.net.VoiceApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.webrtc.EglBase
@@ -118,7 +119,19 @@ private fun ConnectedCallScreenContent(callId: String, authToken: String?, onExi
     var offerSent by remember { mutableStateOf(false) }
     var signalReady by remember { mutableStateOf(false) }
     var voiceVerdict by remember { mutableStateOf<VoiceVerdict?>(null) }
+    var showVoiceVerdict by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(false) }
+
+    // Each tag (human/AI) shows for 5 seconds, then disappears -- "Analyzing..." (before
+    // the first result, or after the tag has hidden while a retry is still pending) has no
+    // timeout of its own.
+    LaunchedEffect(voiceVerdict) {
+        if (voiceVerdict != null) {
+            showVoiceVerdict = true
+            delay(5000)
+            showVoiceVerdict = false
+        }
+    }
     // Which video is the big one -- tapping the small picture-in-picture view swaps them.
     var mainIsLocal by remember { mutableStateOf(false) }
 
@@ -265,8 +278,13 @@ private fun ConnectedCallScreenContent(callId: String, authToken: String?, onExi
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             VerifiedBadge()
-            Spacer(Modifier.height(8.dp))
-            VoiceDetectionBadge(verdict = voiceVerdict)
+            // "Analyzing..." (verdict == null) stays up until the first result; once
+            // there's a verdict, showVoiceVerdict's 5-second timer (above) controls
+            // whether the tag is still on screen.
+            if (voiceVerdict == null || showVoiceVerdict) {
+                Spacer(Modifier.height(8.dp))
+                VoiceDetectionBadge(verdict = voiceVerdict)
+            }
         }
 
         Row(
