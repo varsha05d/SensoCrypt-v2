@@ -13,13 +13,17 @@ import java.nio.ByteOrder
  * voice): WebRtcSession.onRemoteAudioTrack hands us the incoming AudioTrack, and
  * addSink(this) below is how it starts feeding onData() here.
  *
- * Buffers into fixed-length windows and emits each finished window as a 16-bit PCM WAV
- * clip via onWindowReady, so detection runs continuously throughout the call rather than
- * once. onData() runs on WebRTC's own audio thread -- onWindowReady must return quickly
- * (hand off to a coroutine for the actual network call) or it'll stall audio delivery.
+ * Buffers a single fixed-length window and emits it as a 16-bit PCM WAV clip via
+ * onWindowReady -- ONE check at the start of the call, not continuous. (An earlier version
+ * of this ran repeatedly throughout the call; the model's accuracy on real compressed call
+ * audio wasn't reliable enough for a continuously-flickering badge to be useful -- one
+ * check on the first few seconds is a deliberate, simpler scope, at the cost of not
+ * noticing if the voice on the line changes partway through the call.) onData() runs on
+ * WebRTC's own audio thread -- onWindowReady must return quickly (hand off to a coroutine
+ * for the actual network call) or it'll stall audio delivery.
  */
 class VoiceDetectionRecorder(
-    private val windowSeconds: Double = 4.0,
+    private val windowSeconds: Double = 5.0,
     private val onWindowReady: (ByteArray) -> Unit,
 ) : AudioTrackSink {
     private var buffer = ByteArrayOutputStream()
@@ -28,6 +32,7 @@ class VoiceDetectionRecorder(
     private var channels = -1
     private var targetSamples = 0
     private var samplesBuffered = 0
+    private var hasEmitted = false
 
     override fun onData(
         data: ByteBuffer,
@@ -37,6 +42,8 @@ class VoiceDetectionRecorder(
         numberOfFrames: Int,
         absoluteCaptureTimestampMs: Long,
     ) {
+        if (hasEmitted) return
+
         if (sampleRate != this.sampleRate || bitsPerSample != this.bitsPerSample || numberOfChannels != this.channels) {
             // First call, or the remote format changed mid-call (renegotiation) -- restart
             // the window against the new format rather than mixing sample rates in one WAV.
@@ -59,10 +66,10 @@ class VoiceDetectionRecorder(
         samplesBuffered += numberOfFrames
 
         if (samplesBuffered >= targetSamples) {
+            hasEmitted = true
             Log.i("SensoCrypt", "VoiceDetectionRecorder: window ready, ${buffer.size()} bytes / $samplesBuffered samples")
             onWindowReady(toWav(buffer.toByteArray(), sampleRate, bitsPerSample, channels))
-            buffer = ByteArrayOutputStream()
-            samplesBuffered = 0
+            buffer = ByteArrayOutputStream() // release the buffer now that it's no longer needed
         }
     }
 
