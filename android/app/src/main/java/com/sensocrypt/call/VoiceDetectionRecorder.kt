@@ -1,5 +1,6 @@
 package com.sensocrypt.call
 
+import android.util.Log
 import org.webrtc.AudioTrackSink
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -39,6 +40,11 @@ class VoiceDetectionRecorder(
         if (sampleRate != this.sampleRate || bitsPerSample != this.bitsPerSample || numberOfChannels != this.channels) {
             // First call, or the remote format changed mid-call (renegotiation) -- restart
             // the window against the new format rather than mixing sample rates in one WAV.
+            Log.i(
+                "SensoCrypt",
+                "VoiceDetectionRecorder: format ${sampleRate}Hz/${bitsPerSample}bit/${numberOfChannels}ch " +
+                    "(was ${this.sampleRate}/${this.bitsPerSample}/${this.channels})",
+            )
             this.sampleRate = sampleRate
             this.bitsPerSample = bitsPerSample
             this.channels = numberOfChannels
@@ -53,6 +59,7 @@ class VoiceDetectionRecorder(
         samplesBuffered += numberOfFrames
 
         if (samplesBuffered >= targetSamples) {
+            Log.i("SensoCrypt", "VoiceDetectionRecorder: window ready, ${buffer.size()} bytes / $samplesBuffered samples")
             onWindowReady(toWav(buffer.toByteArray(), sampleRate, bitsPerSample, channels))
             buffer = ByteArrayOutputStream()
             samplesBuffered = 0
