@@ -18,8 +18,8 @@ dependencies = [
     "scipy>=1.12",
     "websockets>=12.0",
     "firebase-admin>=6.5",
-    # Voice-detection feature (voice-detection branch only) -- app/api/voice.py's
-    # UploadFile param needs multipart form parsing.
+    # Voice-detection feature -- app/api/voice.py's UploadFile param needs multipart form
+    # parsing.
     "python-multipart>=0.0.9",
 ]
 

@@ -106,23 +106,44 @@ Two independent pieces, deployed two different ways:
 - **Cloud Run service** (`voice-service/`): `gcloud run deploy --source=.` from that
   directory -- see its own `README.md` for the exact command. Scale-to-zero, so it costs
   nothing while idle.
-- **Backend**: `render.yaml` at the repo root defines `sensocrypt-v2-backend-voicedetect` as
-  its own Render web service + Postgres database, separate from main's
-  `sensocrypt-v2-backend` / `sensocrypt-v2-db`. Deploy it as a **new** Render Blueprint
-  instance pointed at the `voice-detection` branch -- not by re-running the production
-  blueprint -- so it creates its own resources instead of touching the production ones.
-  After creating it, set the `sync: false` env vars manually in the Render dashboard:
-  `PASETO_LOCAL_KEY_HEX`, `PINNED_SIGNING_CERT_DIGESTS_HEX` (can stay empty for a debug-signed
-  test build), `FIREBASE_SERVICE_ACCOUNT_JSON`, `VOICE_SERVICE_URL` (the Cloud Run service's
-  URL), `VOICE_SERVICE_API_KEY` (matching what's set on the Cloud Run service).
+- **Backend**: this repo's normal Render deploy -- `render.yaml` defines
+  `sensocrypt-v2-backend` (the same production service everything else uses) with two
+  additional env vars for this feature, `VOICE_SERVICE_URL` and `VOICE_SERVICE_API_KEY`
+  (both `sync: false`, set manually in the Render dashboard, pointed at the Cloud Run
+  service above). No separate backend service or database -- this feature was originally
+  developed and tested against an isolated one while still in progress, then wired into
+  production once the accuracy mitigations below made it worth testing with the client.
 
-## Known limitation (not yet solved)
+## Known limitation, and what's been done about it
 
 RawNet2 was trained/validated on the ASVspoof2019-DF dataset -- clean, uncompressed studio
 audio. Real call audio goes through Opus compression plus WebRTC's own noise
 suppression/echo cancellation, which distorts the waveform in ways the model wasn't trained
 to handle. Tested live on two real phones over an actual call: the same real human voice
-flipped between "human" and "ai_generated" at 99%+ confidence across consecutive ~4-second
-windows. The pipeline itself (capture, upload, proxy, inference, badge) works correctly
-end-to-end -- the open problem is the model's accuracy specifically on compressed VoIP
-audio, not the plumbing around it.
+flipped between "human" and "ai_generated" at high confidence across consecutive windows.
+The pipeline itself (capture, upload, proxy, inference, badge) works correctly end-to-end --
+the model's accuracy specifically on compressed VoIP audio is the actual limitation, not the
+plumbing around it. Three community-published wav2vec2-based alternatives were evaluated as
+replacements and rejected: all three predicted the same class for every test clip regardless
+of content. A model that reportedly generalizes well to this exact scenario
+(`nii-yamagishilab/xls-r-1b-anti-deepfake`, trained partly on codec-compressed audio) exists
+but is disqualified by license (CC BY-NC-SA 4.0, non-commercial only).
+
+Rather than a better model, what shipped is UX-level mitigation of the false-positive
+pattern actually observed (a real voice occasionally flagged `ai_generated`, not
+consistently):
+
+- `WebRtcSession.kt` disables WebRTC's own echo-cancellation/AGC/noise-suppression on the
+  outgoing mic signal -- those algorithms run before the audio is encoded and sent, so they
+  shape exactly what the far side's detector analyzes, and can introduce artifacts a model
+  trained on clean speech never saw.
+- `VoiceDetectionRecorder` checks up to 3 times (5 seconds each) at the start of the call,
+  not continuously throughout it -- a "human" result is treated as conclusive and stops
+  further checking immediately; an "ai_generated" result is not trusted on a single try and
+  falls through to the next one automatically.
+- The badge shows each result for 5 seconds then hides, rather than sitting on screen
+  indefinitely.
+
+None of this makes the underlying model more accurate -- it reduces how often a real voice
+gets shown as flagged, at the real cost (explicitly accepted) of only checking the first
+~15 seconds of a call, not the whole thing.
