@@ -6,9 +6,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -21,7 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -104,6 +109,9 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
     var endedMessage by remember { mutableStateOf<String?>(null) }
     var offerSent by remember { mutableStateOf(false) }
     var signalReady by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(false) }
+    // Which video is the big one -- tapping the small picture-in-picture view swaps them.
+    var mainIsLocal by remember { mutableStateOf(false) }
 
     val eglBase = remember { EglBase.create() }
     val webRtcSession = remember { WebRtcSession(context, eglBase) }
@@ -186,8 +194,27 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
         }
     }
 
+    val fullScreenModifier = Modifier.fillMaxSize()
+    val pipModifier = Modifier
+        .size(110.dp, 150.dp)
+        .padding(bottom = 96.dp, end = 16.dp)
+        .clip(RoundedCornerShape(14.dp))
+        .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+        .clickable { mainIsLocal = !mainIsLocal }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(modifier = Modifier.fillMaxSize(), factory = { remoteRenderer })
+        // Each renderer stays in its own fixed AndroidView (a View can't be reparented
+        // between two AndroidView hosts on recomposition -- factory only runs once) --
+        // tapping the small one just swaps which ONE'S MODIFIER is fullscreen vs.
+        // picture-in-picture, never which View lives where.
+        AndroidView(
+            modifier = if (mainIsLocal) Modifier.align(Alignment.BottomEnd).then(pipModifier) else fullScreenModifier,
+            factory = { remoteRenderer },
+        )
+        AndroidView(
+            modifier = if (mainIsLocal) fullScreenModifier else Modifier.align(Alignment.BottomEnd).then(pipModifier),
+            factory = { localRenderer },
+        )
 
         IconButton(
             onClick = { endCall() },
@@ -199,22 +226,39 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
 
         VerifiedBadge(modifier = Modifier.align(Alignment.TopCenter).systemBarsPadding().padding(top = 12.dp))
 
-        AndroidView(
-            modifier = Modifier
-                .size(110.dp, 150.dp)
-                .align(Alignment.BottomEnd)
-                .padding(16.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(14.dp)),
-            factory = { localRenderer },
-        )
-
-        IconButton(
-            onClick = { endCall() },
-            modifier = Modifier.align(Alignment.BottomCenter).systemBarsPadding().padding(bottom = 16.dp)
-                .size(64.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.align(Alignment.BottomCenter).systemBarsPadding().padding(bottom = 16.dp),
         ) {
-            Icon(Icons.Filled.CallEnd, contentDescription = "End call", tint = Color.White, modifier = Modifier.size(28.dp))
+            IconButton(
+                onClick = {
+                    isMuted = !isMuted
+                    webRtcSession.setMuted(isMuted)
+                },
+                modifier = Modifier.size(52.dp).clip(CircleShape)
+                    .background(if (isMuted) Color.White else Color.Black.copy(alpha = 0.45f)),
+            ) {
+                Icon(
+                    if (isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                    tint = if (isMuted) Color.Black else Color.White,
+                )
+            }
+
+            IconButton(
+                onClick = { endCall() },
+                modifier = Modifier.size(64.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error),
+            ) {
+                Icon(Icons.Filled.CallEnd, contentDescription = "End call", tint = Color.White, modifier = Modifier.size(28.dp))
+            }
+
+            IconButton(
+                onClick = { webRtcSession.switchCamera() },
+                modifier = Modifier.size(52.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)),
+            ) {
+                Icon(Icons.Filled.Cameraswitch, contentDescription = "Switch camera", tint = Color.White)
+            }
         }
 
         endedMessage?.let { message -> CallEndedOverlayView(message = message, onBackToHome = onExit) }
