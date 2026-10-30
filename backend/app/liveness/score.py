@@ -34,7 +34,10 @@ def window_score(w_vis, w_dev, conf):
 
     # magnitude coherence: does the AMOUNT of motion match, not just its shape?
     gain = float(np.linalg.norm(w_vis) / (np.linalg.norm(w_dev) + 1e-9))
-    gain_pen = float(np.exp(-(abs(np.log(max(gain, 1e-3))) ** 2) / 0.5))
+    # Tolerance widened from /0.5 to /1.0: at slight-shake amplitudes the camera-derived
+    # rotation is only a fraction of a pixel per frame, so its magnitude is noisy and the
+    # old penalty discarded genuine sessions whose SHAPE matched perfectly.
+    gain_pen = float(np.exp(-(abs(np.log(max(gain, 1e-3))) ** 2) / 1.0))
 
     return {
         "r": r_w,

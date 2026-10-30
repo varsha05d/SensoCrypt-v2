@@ -6,11 +6,14 @@ HOP_S = 0.5
 BAND_LO_HZ = 0.4
 BAND_HI_HZ = 8.0
 MAX_LAG_S = 0.35
-# Lowered from 0.15: in low light the illumination channel is weak/inconclusive (screen
-# flash barely changes ambient brightness), so motion needs to pick up more of the slack --
-# small natural vibration/hand tremor should count as real evidence, not just deliberate
-# obvious shaking.
-MOTION_GATE = 0.08  # rad/s RMS
+# Tuned for SLIGHT shaking: a phone held in a hand always carries a small tremor
+# (~0.02-0.05 rad/s after the 0.4-8Hz bandpass) and a calm user won't shake it on purpose.
+# At the old 0.08 gate a slight shake was "no evidence" and never counted (simulated: 0% of
+# genuine 0.03-0.05 rad/s sessions verified; 100% at 0.02-0.03). The floor can't go much
+# lower: gyro noise is ~0.003, and below ~0.02 an unrelated gyro/camera pair starts
+# correlating by chance often enough to pass (simulated false-accepts: 0% at 0.02 with the
+# thresholds below, 3-38% at 0.01 with looser ones). Re-run that simulation before moving it.
+MOTION_GATE = 0.02  # rad/s RMS
 FRAME_W, FRAME_H = 160, 120
 TELEMETRY_FPS = 15
 CHUNK_MS = 500
@@ -34,7 +37,7 @@ NO_EVIDENCE_TIMEOUT_S = 10.0
 # unreachable in practice even with good real motion). Tighten back toward those targets
 # once there's real labelled genuine/attack data to fit fuse() against (see
 # eval/negative_control.py for the kind of check that should gate any change).
-P_TRUST, P_DEGRADE, P_SUSPECT = 0.35, 0.20, 0.08
+P_TRUST, P_DEGRADE, P_SUSPECT = 0.25, 0.15, 0.05  # was 0.35/0.20/0.08; see MOTION_GATE note
 # Fast to promote (3 windows ~= 1.5s of good evidence is enough to trust), slow to demote
 # (8-12 windows ~= 4-6s of SUSTAINED weak/bad evidence) -- a person calmly talking produces
 # occasional noisy, low-confidence motion windows that must not be able to single-handedly

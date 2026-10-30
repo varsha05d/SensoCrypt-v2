@@ -27,7 +27,12 @@ from app.liveness.constants import (
 
 BUFFER_S = WINDOW_S + 1.0
 LAG_LOCK_MIN_STRENGTH = 0.3
-AXIS_MAP_LOCK_MIN_SCORE = 0.3
+# Raised from 0.3 now that axis calibration also runs on slight motion (AXIS_MAP_MIN_ENERGY
+# below follows MOTION_GATE): on pure noise the brute-force search over 48 mappings reaches
+# a best score above 0.3 about 8% of the time -- a wrong lock persists for the whole session
+# (sustained negative r) -- versus ~0.1% at 0.45; genuine motion locks the correct mapping
+# 100% of the time at any of 0.3/0.4/0.5 (simulated, including 0.03 rad/s shakes).
+AXIS_MAP_LOCK_MIN_SCORE = 0.45
 AXIS_MAP_MIN_ENERGY = MOTION_GATE * 2  # needs clearly-real motion, not just above the noise floor
 CHALLENGE_END_MARGIN_S = 0.3
 ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust indefinitely
