@@ -35,6 +35,7 @@ def _flat(flash, base):
 def _run(response, gray_only=False, seconds=30, seed=0):
     rng = np.random.default_rng(seed)
     engine = LivenessEngine(quick=True)
+    engine.seen_color = set()  # every frame timestamp that was ever decoded in colour
     challenges = []
     states, last = [], {}
     t = 10_000_000_000
@@ -61,6 +62,7 @@ def _run(response, gray_only=False, seconds=30, seed=0):
         result = engine.ingest({"frames": chunk_frames, "imu": {"gyro": []}})
         if "new_challenge" in result:
             challenges.append(result["new_challenge"])
+        engine.seen_color.update(t_ for t_, _ in engine.color_frames)
         json.dumps(result)  # the verdict goes to the phone as JSON: no numpy types allowed
         states.append(result.get("trust_state"))
         last = result
@@ -130,7 +132,7 @@ def test_a_reflection_blocks_trust_even_if_the_channel_was_untestable_before():
 
 def test_colour_is_only_decoded_around_a_challenge_window():
     engine, states, last, challenges = _run(_face, seconds=20)
-    assert challenges and len(engine.color_frames) > 0 and len(engine.frames) > 0
+    assert challenges and len(engine.seen_color) > 0 and len(engine.frames) > 0
 
     def near_a_challenge(t):
         for c in challenges:
@@ -139,6 +141,6 @@ def test_colour_is_only_decoded_around_a_challenge_window():
                 return True
         return False
 
-    assert all(near_a_challenge(t) for t, _ in engine.color_frames)
+    assert all(near_a_challenge(t) for t in engine.seen_color)
     # ...and plain gray frames exist outside those windows, so motion scoring is unaffected
     assert any(not near_a_challenge(t) for t, _ in engine.frames)
