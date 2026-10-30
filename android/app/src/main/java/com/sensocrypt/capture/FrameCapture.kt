@@ -47,7 +47,15 @@ class FrameCapture(
 
             val yPlane = image.planes[0]
             val gray = downscaleLuma(yPlane.buffer, yPlane.rowStride, image.width, image.height, TARGET_W, TARGET_H)
-            val rgb = if (image.planes.size >= 3) downscaleRgb(image) else null
+            // Colour is an extra for the backend's illumination check -- if the conversion
+            // ever fails on some device, fall back to gray-only instead of killing the camera
+            // pipeline (an exception here would crash the whole app).
+            val rgb = try {
+                if (image.planes.size >= 3) downscaleRgb(image) else null
+            } catch (e: Exception) {
+                android.util.Log.w("SensoCrypt", "colour frame conversion failed, sending gray only: ${e.message}")
+                null
+            }
             val deviceTs = if (synchronizer.isCalibrated) synchronizer.toDeviceClock(rawTs) else rawTs
             onFrame(GrayFrame(deviceTs, TARGET_W, TARGET_H, gray, rgb))
         } finally {
@@ -82,9 +90,11 @@ class FrameCapture(
         val yP = image.planes[0]
         val uP = image.planes[1]
         val vP = image.planes[2]
-        val yBuf = ByteArray(yP.buffer.remaining()).also { yP.buffer.get(it) }
-        val uBuf = ByteArray(uP.buffer.remaining()).also { uP.buffer.get(it) }
-        val vBuf = ByteArray(vP.buffer.remaining()).also { vP.buffer.get(it) }
+        // downscaleLuma() has already read the Y buffer to its end, so rewind a duplicate
+        // of each plane instead of trusting the shared position.
+        val yBuf = planeBytes(yP.buffer)
+        val uBuf = planeBytes(uP.buffer)
+        val vBuf = planeBytes(vP.buffer)
         val out = ByteArray(TARGET_W * TARGET_H * 3)
         for (dy in 0 until TARGET_H) {
             val sy = dy * image.height / TARGET_H
@@ -102,5 +112,11 @@ class FrameCapture(
             }
         }
         return out
+    }
+
+    private fun planeBytes(buffer: ByteBuffer): ByteArray {
+        val dup = buffer.duplicate()
+        dup.rewind()
+        return ByteArray(dup.remaining()).also { dup.get(it) }
     }
 }
