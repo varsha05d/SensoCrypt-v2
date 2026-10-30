@@ -49,6 +49,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import android.util.Log
+import com.sensocrypt.identity.UserSession
+import com.sensocrypt.net.IceApi
 import com.sensocrypt.net.SignalSocket
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -150,7 +153,10 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
         }
         webRtcSession.onRemoteVideoTrack = { track -> track.addSink(remoteRenderer) }
 
-        webRtcSession.start(localRenderer)
+        val token = UserSession(context).authToken
+        val iceServers = token?.let { IceApi().getIceServers(it) }
+        Log.i("SensoCrypt", "ConnectedCall: ICE servers from backend = ${iceServers?.size ?: "none (STUN fallback)"}")
+        webRtcSession.start(localRenderer, iceServers = iceServers)
         signalSocket.connect()
 
         scope.launch {

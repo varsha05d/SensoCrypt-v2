@@ -71,5 +71,11 @@ class Settings(BaseSettings):
     # secret like this, and it avoids needing to bake the file into the Docker image.
     firebase_service_account_json: str = ""
 
+    # TURN relay for calls between phones on different networks (Metered.ca free tier). Both
+    # are secrets/ids set only in the host's environment; if unset, calls get STUN only and
+    # only work when a direct peer-to-peer path exists.
+    metered_app_name: str = ""  # the "<name>" in <name>.metered.live
+    metered_api_key: str = ""
+
 
 settings = Settings()

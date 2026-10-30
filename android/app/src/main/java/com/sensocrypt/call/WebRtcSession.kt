@@ -68,7 +68,11 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
             .createPeerConnectionFactory()
     }
 
-    fun start(localRenderer: SurfaceViewRenderer, livenessFrameSink: VideoSink? = null) {
+    fun start(
+        localRenderer: SurfaceViewRenderer,
+        livenessFrameSink: VideoSink? = null,
+        iceServers: List<PeerConnection.IceServer>? = null,
+    ) {
         localRenderer.init(eglBase.eglBaseContext, null)
 
         val capturer = createFrontCameraCapturer() ?: throw IllegalStateException("No front camera available")
@@ -89,27 +93,12 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
         val audioTrack: AudioTrack = factory.createAudioTrack("audio0", audioSource)
         localAudioTrack = audioTrack
 
-        // STUN alone only works when at least one side's NAT allows a direct hole-punch --
-        // fine on the same LAN, but two phones on two different home/mobile networks often
-        // sit behind NATs that block that entirely. TURN relays the media through a third
-        // party in that case. Open Relay Project's free static credentials (no signup, no
-        // cost) stand in for a self-hosted coturn server, which isn't worth running for a
-        // free-tier deployment.
+        // Servers come from the backend (/ice-servers) so TURN credentials stay out of the
+        // APK. Without a TURN relay, phones on different networks often can't reach each
+        // other. The fallback is STUN only.
         val rtcConfig = PeerConnection.RTCConfiguration(
-            listOf(
+            iceServers ?: listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
-                    .setUsername("openrelayproject")
-                    .setPassword("openrelayproject")
-                    .createIceServer(),
-                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443")
-                    .setUsername("openrelayproject")
-                    .setPassword("openrelayproject")
-                    .createIceServer(),
-                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
-                    .setUsername("openrelayproject")
-                    .setPassword("openrelayproject")
-                    .createIceServer(),
             ),
         )
         peerConnection = factory.createPeerConnection(
@@ -126,7 +115,9 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
 
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) = Unit
+                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                    Log.i("SensoCrypt", "WebRtc ICE connection state: $state")
+                }
                 override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) = Unit
                 override fun onAddStream(stream: MediaStream?) = Unit
