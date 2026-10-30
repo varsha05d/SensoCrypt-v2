@@ -101,3 +101,44 @@ def test_a_reflection_after_a_clean_pass_revokes_confirmation():
     assert not engine.illum_confirmed
     assert engine.reflection_until_ns is not None
     assert engine.trust_fsm.state == "SUSPECT"
+
+
+def test_untestable_illumination_does_not_lock_the_user_out():
+    # Flash swamped by ambient light / challenge skipped: no usable verdict ever arrives,
+    # so motion evidence alone must be allowed to carry trust.
+    e = LivenessEngine(quick=True)
+    assert not e.illum_testable
+    assert e._allow_trust(1_000_000_000)
+
+
+def test_once_illumination_is_testable_a_pass_is_required():
+    e = LivenessEngine(quick=True)
+    e._apply_illumination_verdict({"verdict": "ok", "diffuse_ok": True, "S_illum": 0.2}, 1_000_000_000)
+    assert e.illum_testable and not e.illum_confirmed
+    assert not e._allow_trust(2_000_000_000)          # weak/neutral response: not enough
+    e._apply_illumination_verdict({"verdict": "ok", "diffuse_ok": True, "S_illum": 0.9}, 3_000_000_000)
+    assert e._allow_trust(4_000_000_000)
+
+
+def test_a_reflection_blocks_trust_even_if_the_channel_was_untestable_before():
+    e = LivenessEngine(quick=True)
+    e._apply_illumination_verdict({"verdict": "reflection", "reflection": True}, 1_000_000_000)
+    assert not e._allow_trust(2_000_000_000)
+    assert not e._allow_trust(1_000_000_000 + 19_000_000_000)   # still inside the 20s veto
+    assert not e.illum_confirmed
+
+
+def test_colour_is_only_decoded_around_a_challenge_window():
+    engine, states, last, challenges = _run(_face, seconds=20)
+    assert challenges and len(engine.color_frames) > 0 and len(engine.frames) > 0
+
+    def near_a_challenge(t):
+        for c in challenges:
+            end = c["start_at_ns"] + int(sum(st["dur_ms"] for st in c["states"]) * 1e6)
+            if c["start_at_ns"] - 0.4e9 <= t <= end + 0.4e9:
+                return True
+        return False
+
+    assert all(near_a_challenge(t) for t, _ in engine.color_frames)
+    # ...and plain gray frames exist outside those windows, so motion scoring is unaffected
+    assert any(not near_a_challenge(t) for t, _ in engine.frames)

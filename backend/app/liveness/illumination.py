@@ -157,7 +157,9 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
 
     # Clipping: how much MORE of the frame is blown out during bright flashes than dark ones.
     clip = np.array([float((f.min(axis=2) >= 250).mean()) for _, f in rows])
-    hi, lo = exp_luma > 200, exp_luma < 30
+    # Only white flashes can clip all three channels, so judge clipping on those frames
+    # (yellow/cyan flashes leave one channel low and would dilute the median).
+    hi, lo = exp_rgb.min(axis=1) > 200, exp_luma < 30
     # Median over the bright frames, not the max: glare stays clipped for the whole flash,
     # while a camera's auto-exposure can overshoot for a frame or two after a black->white
     # transition even on a genuine face.

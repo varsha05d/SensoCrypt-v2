@@ -31,9 +31,10 @@ AXIS_MAP_LOCK_MIN_SCORE = 0.3
 AXIS_MAP_MIN_ENERGY = MOTION_GATE * 2  # needs clearly-real motion, not just above the noise floor
 CHALLENGE_END_MARGIN_S = 0.3
 ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust indefinitely
-# TRUSTED now requires a clean illumination pass (a diffuse, face-like response to the
-# flash), not just motion evidence -- motion alone says the camera is live, not that a real
-# face is lit by OUR screen. A challenge that correlates but fails the spatial test
+# Once the illumination channel has produced a usable verdict, TRUSTED requires a clean pass
+# (a diffuse, face-like response to the flash), not just motion evidence -- motion alone says
+# the camera is live, not that a real face is lit by OUR screen. (Before any usable verdict
+# the channel is "untestable" and motion alone may carry trust; see illum_testable.) A challenge that correlates but fails the spatial test
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
 ILLUM_CONFIRM_MIN = 0.5
 REFLECTION_VETO_S = 20.0
@@ -65,6 +66,12 @@ class LivenessEngine:
 
         self.trust_fsm = fusion.TrustFSM()
         self.illum_confirmed = False
+        # Set once ANY challenge produced a usable verdict ("ok" or "reflection"). Until then
+        # the illumination channel is untestable on this device/room (flash swamped by
+        # ambient light, challenge skipped as late, ...) and motion evidence alone must be
+        # allowed to carry trust -- otherwise a phone whose flash never registers can never
+        # verify at all (observed: the check timed out on genuine calls).
+        self.illum_testable = False
         self.reflection_until_ns: int | None = None
         self.reflection_count = 0
 
@@ -220,7 +227,31 @@ class LivenessEngine:
 
         return new_challenge
 
+    def _wants_color(self, t_ns: int) -> bool:
+        """Colour frames are only needed to score a flash challenge. Decoding colour (and
+        converting to gray) for every frame costs noticeably more than the old gray-only
+        decode, and this backend runs on a tiny shared CPU where verdicts were already
+        arriving late -- so decode colour only around an active/pending challenge window."""
+        for ch in (self.active_challenge, self.pending_challenge):
+            if ch is None:
+                continue
+            start = ch["start_at_ns"]
+            end = start + int(sum(st["dur_ms"] for st in ch["states"]) * 1e6)
+            if start - int(0.4e9) <= t_ns <= end + int(0.4e9):
+                return True
+        return False
+
+    def _allow_trust(self, latest_ts: int) -> bool:
+        vetoed = self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns
+        if vetoed:
+            return False
+        # A testable illumination channel must have passed; an untestable one must not
+        # lock the user out (see illum_testable).
+        return self.illum_confirmed or not self.illum_testable
+
     def _apply_illumination_verdict(self, result: dict, latest_ts: int) -> None:
+        if result.get("verdict") in ("ok", "reflection"):
+            self.illum_testable = True
         if result.get("reflection"):
             # Looked like a lit face by brightness alone, but the light came back as a
             # compact/clipped hot spot: a glossy screen mirroring our flash. Revoke any
@@ -234,10 +265,16 @@ class LivenessEngine:
 
     def ingest(self, chunk: dict) -> dict:
         for f in chunk.get("frames", []):
-            color = cv2.imdecode(np.frombuffer(f["jpeg_bytes"], dtype=np.uint8), cv2.IMREAD_COLOR)
-            if color is not None:
-                self.color_frames.append((f["t_ns"], color))
-                self.frames.append((f["t_ns"], cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)))
+            buf = np.frombuffer(f["jpeg_bytes"], dtype=np.uint8)
+            if self._wants_color(f["t_ns"]):
+                color = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+                if color is not None:
+                    self.color_frames.append((f["t_ns"], color))
+                    self.frames.append((f["t_ns"], cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)))
+            else:
+                arr = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+                if arr is not None:
+                    self.frames.append((f["t_ns"], arr))
         for t_ns, wx, wy, wz in chunk.get("imu", {}).get("gyro", []):
             self.gyro.append((t_ns, wx, wy, wz))
 
@@ -276,8 +313,9 @@ class LivenessEngine:
             else None
         )
         vetoed = self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns
-        allow_trust = self.illum_confirmed and not vetoed
+        allow_trust = self._allow_trust(latest_ts)
         result["illum_confirmed"] = self.illum_confirmed
+        result["illum_testable"] = self.illum_testable
         result["reflection_veto"] = vetoed
         result["reflection_count"] = self.reflection_count
         if s_a is not None or s_illum is not None:
