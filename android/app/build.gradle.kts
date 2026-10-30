@@ -21,6 +21,11 @@ android {
     namespace = "com.sensocrypt"
     compileSdk = 34
 
+    testOptions {
+        // android.jar stubs (SystemClock etc.) otherwise throw in plain JVM unit tests.
+        unitTests.isReturnDefaultValues = true
+    }
+
     defaultConfig {
         // Distinct from the original SensoCrypt's "com.sensocrypt" so both apps can be
         // installed side-by-side on the same test phone -- v1 stays available as a
@@ -81,6 +86,7 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")

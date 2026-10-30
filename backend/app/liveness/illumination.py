@@ -35,11 +35,20 @@ OBS_STD_FLOOR = 3.0          # 0-255 brightness units; below this the flash left
 GLOBAL_R_MIN = 0.5           # global correlation needed to count as a real response at all
 CELL_CORR_MIN = 0.5          # a cell "responds" if it correlates with the flash this well
 CELL_GAIN_REL_MIN = 0.25     # ...and its gain is at least this fraction of the strongest cell's
-COVERAGE_MIN_CELLS = 8       # a face lights up at least this many of the 48 cells
-TOP1_SHARE_MAX = 0.35        # no single cell may carry more than this share of the response
-CLIP_DELTA_MAX = 0.03        # flash must not drive >3% of the frame into clipping
-CHROMA_RATIO_SPECULAR = 0.90 # blue/red gain this close to 1 = neutral (mirror-like)
-CHROMA_FACTOR_SPECULAR = 0.3
+
+# HARD reflection signatures -- physically unambiguous, so they veto outright:
+CLIP_DELTA_MAX = 0.05        # the flash drives >5% of the frame into clipping: glare
+HOTSPOT_MAX_CELLS = 2        # response confined to <=2 cells...
+HOTSPOT_TOP1_MIN = 0.40      # ...carrying >=40% of the total: a single compact hot spot
+
+# SOFT cues -- ambiguous on their own (a genuine face held at arm's length lights only ~6
+# cells, about what a medium glare patch does), so they scale the score down instead of
+# vetoing. A genuine user is not rejected on one borderline measurement.
+COVERAGE_FULL_CELLS = 6      # with colour: this many responding cells = full marks
+COVERAGE_FULL_CELLS_GRAY = 8 # without colour there is less to go on: ask for more spread
+TOP1_SOFT_MAX = 0.30         # above this, concentration starts to cost score
+CHROMA_RATIO_SPECULAR = 0.85 # blue/red gain this close to 1 = neutral (mirror-like)
+CHROMA_FACTOR_SPECULAR = 0.3 # skin absorbs blue, so a neutral response is penalised
 LAG_CANDIDATES_MS = (0, 33, 66, 100, 133, 166, 200)
 
 _LUMA = np.array([0.299, 0.587, 0.114])
@@ -72,6 +81,12 @@ def _is_gray_replicated(frames: list[np.ndarray]) -> bool:
     return float(np.abs(f[:, :, 0] - f[:, :, 1]).mean() + np.abs(f[:, :, 1] - f[:, :, 2]).mean()) < 0.5
 
 
+def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
+    if a.std() < 1e-9 or b.std() < 1e-9:
+        return 0.0
+    return float(np.corrcoef(a, b)[0, 1])
+
+
 def _gain_corr(exp: np.ndarray, obs: np.ndarray) -> tuple[float, float]:
     """Regression slope and correlation of obs against exp (both 1-D)."""
     ev = exp - exp.mean()
@@ -88,6 +103,7 @@ def _gain_corr(exp: np.ndarray, obs: np.ndarray) -> tuple[float, float]:
 def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
     """observed: (t_ns, BGR frame) for frames captured during the challenge window."""
     start = challenge["start_at_ns"]
+    cell_cache = {id(f): _cell_means(f) for _, f in observed}  # lags re-use the same frames
     best = None
     for lag_ms in LAG_CANDIDATES_MS:
         rows = []
@@ -98,10 +114,8 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
         if len(rows) < MIN_FRAMES:
             continue
         exp_luma = np.array([e @ _LUMA for e, _ in rows])
-        mean_luma = np.array([float((_cell_means(f) @ _LUMA).mean()) for _, f in rows])
-        if exp_luma.std() < 1e-6:
-            continue
-        r = float(np.corrcoef(exp_luma, mean_luma)[0, 1])
+        mean_luma = np.array([float((cell_cache[id(f)] @ _LUMA).mean()) for _, f in rows])
+        r = _safe_corr(exp_luma, mean_luma)
         if best is None or r > best[0]:
             best = (r, lag_ms, rows)
 
@@ -109,10 +123,11 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
         return {"verdict": "insufficient_frames", "S_illum": 0.0, "n": len(observed)}
 
     r, lag_ms, rows = best
+    # (r above is the global flash correlation at the best-fitting latency)
     n = len(rows)
     exp_rgb = np.stack([e for e, _ in rows])            # (n, 3)
     exp_luma = exp_rgb @ _LUMA
-    cells = np.stack([_cell_means(f) for _, f in rows])  # (n, R, C, 3)
+    cells = np.stack([cell_cache[id(f)] for _, f in rows])  # (n, R, C, 3)
     cell_luma = cells @ _LUMA                            # (n, R, C)
     global_obs = cell_luma.mean(axis=(1, 2))
 
@@ -128,25 +143,25 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
     coverage = int(responding.sum())
     top1_share = float(pos.max() / pos.sum()) if pos.sum() > 1e-9 else 1.0
 
-    # A localised, flash-locked response can hide below the GLOBAL noise floor (a small mirror
-    # patch barely moves the frame mean) -- so check individual cells before calling the
-    # whole thing "no variation".
     cell_std = flat.std(axis=0)
     strong_cells = int(((corrs >= CELL_CORR_MIN) & (cell_std >= OBS_STD_FLOOR)).sum())
     if global_obs.std() < OBS_STD_FLOOR:
-        if 0 < strong_cells < COVERAGE_MIN_CELLS:
-            return {
-                "verdict": "reflection", "S_illum": 0.0, "reflection": True, "diffuse_ok": False,
-                "n": n, "r": r, "coverage_cells": strong_cells, "top1_share": top1_share,
-                "global_obs_std": float(global_obs.std()),
-            }
-        # Ambient light swamped the flash. Still "can't tell", exactly as before.
-        return {"verdict": "no_variation", "S_illum": 0.0, "n": n, "obs_std": float(global_obs.std())}
+        # Ambient light swamped the flash: "can't tell", which is never confirmed. A tiny
+        # flash-locked patch in an otherwise flat frame is NOT escalated to a reflection --
+        # glasses lenses and shiny skin do exactly that on genuine users, and the
+        # attack it would catch can't be confirmed from a flat frame anyway.
+        return {
+            "verdict": "no_variation", "S_illum": 0.0, "n": n, "obs_std": float(global_obs.std()),
+            "localised_cells": strong_cells,
+        }
 
     # Clipping: how much MORE of the frame is blown out during bright flashes than dark ones.
     clip = np.array([float((f.min(axis=2) >= 250).mean()) for _, f in rows])
     hi, lo = exp_luma > 200, exp_luma < 30
-    clip_delta = float(clip[hi].max() - np.median(clip[lo])) if hi.any() and lo.any() else 0.0
+    # Median over the bright frames, not the max: glare stays clipped for the whole flash,
+    # while a camera's auto-exposure can overshoot for a frame or two after a black->white
+    # transition even on a genuine face.
+    clip_delta = float(np.median(clip[hi]) - np.median(clip[lo])) if hi.any() and lo.any() else 0.0
 
     # Colour: per-channel gain of the responding cells against each flashed channel.
     chroma = None
@@ -172,15 +187,20 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
     if r < GLOBAL_R_MIN:
         return {"verdict": "ok", "S_illum": max(0.0, r), "reflection": False, "diffuse_ok": False, **features}
 
-    diffuse_ok = (
-        coverage >= COVERAGE_MIN_CELLS and top1_share <= TOP1_SHARE_MAX and clip_delta <= CLIP_DELTA_MAX
-    )
-    if not diffuse_ok:
-        # Correlates with the flash like a lit face would, but the light came back as a
-        # compact / clipped hot spot: that's a glossy surface mirroring the screen.
-        return {"verdict": "reflection", "S_illum": 0.0, "reflection": True, "diffuse_ok": False, **features}
+    # Hard signatures: unambiguous glare, veto outright.
+    clipped = clip_delta > CLIP_DELTA_MAX
+    hotspot = coverage <= HOTSPOT_MAX_CELLS and top1_share >= HOTSPOT_TOP1_MIN
+    if clipped or hotspot:
+        return {
+            "verdict": "reflection", "S_illum": 0.0, "reflection": True, "diffuse_ok": False,
+            "reflection_reason": "clipping" if clipped else "hotspot", **features,
+        }
 
-    score = max(0.0, r)
-    if chroma is not None and chroma >= CHROMA_RATIO_SPECULAR:
-        score *= CHROMA_FACTOR_SPECULAR  # skin should absorb blue; neutral response is suspect
+    # Soft cues: graded, so a genuine user with a smaller / further face still passes.
+    full = COVERAGE_FULL_CELLS if chroma is not None else COVERAGE_FULL_CELLS_GRAY
+    f_cov = min(1.0, max(0.2, coverage / full))
+    f_top1 = 1.0 if top1_share <= TOP1_SOFT_MAX else max(0.2, 1.0 - (top1_share - TOP1_SOFT_MAX) * 3.0)
+    f_chroma = CHROMA_FACTOR_SPECULAR if (chroma is not None and chroma >= CHROMA_RATIO_SPECULAR) else 1.0
+    score = max(0.0, r) * f_cov * f_top1 * f_chroma
+    features.update({"f_cov": f_cov, "f_top1": f_top1, "f_chroma": f_chroma})
     return {"verdict": "ok", "S_illum": score, "reflection": False, "diffuse_ok": True, **features}

@@ -61,9 +61,11 @@ def test_diffuse_face_like_response_passes():
     assert res["S_illum"] > 0.5, res
 
 
-def test_mirror_hotspot_is_flagged_as_reflection():
+def test_small_mirror_patch_is_never_confirmed():
+    # Too small to move the frame's overall brightness: reported as "no variation" (not as
+    # a reflection -- glasses lenses look like this on genuine users), but never confirmed.
     res = illumination.analyze(_frames(_CHALLENGE, _mirror), _CHALLENGE)
-    assert res["verdict"] == "reflection", res
+    assert res["verdict"] in ("no_variation", "reflection"), res
     assert res["S_illum"] == 0.0
 
 
@@ -72,3 +74,69 @@ def test_flat_scene_is_no_variation():
     res = illumination.analyze(_frames(_CHALLENGE, flat), _CHALLENGE)
     assert res["verdict"] == "no_variation", res
 
+
+
+# --- regression matrix: genuine users must not be rejected, attacks must not be confirmed ---
+
+def _confirmed(res):
+    return res["verdict"] == "ok" and res.get("diffuse_ok") and res["S_illum"] >= 0.5
+
+
+def _face_sized(sy, sx, peak):
+    def f(flash, base):
+        yy, xx = np.mgrid[0:H, 0:W]
+        blob = np.exp(-(((yy - 60) / sy) ** 2 + ((xx - 80) / sx) ** 2))
+        return (base + blob[:, :, None] * (flash * np.array([peak, peak * 0.66, peak * 0.33]))[None, None, :])[:, :, ::-1]
+    return f
+
+
+def _mirror_sized(h, w, gain):
+    def f(flash, base):
+        out = base.copy()
+        y0, x0 = 60 - h // 2, 80 - w // 2
+        out[y0:y0 + h, x0:x0 + w, :] += flash[None, None, :] * gain
+        return out[:, :, ::-1]
+    return f
+
+
+def _fresh():
+    c = challenge_mod.generate_challenge(0)
+    c["start_at_ns"] = 0
+    return c
+
+
+def test_genuine_face_at_armslength_is_not_rejected():
+    # ~6-8 responding cells: what a genuine user holding the phone at a normal distance gets.
+    for _ in range(3):
+        c = _fresh()
+        res = illumination.analyze(_frames(c, _face_sized(20, 24, 0.8)), c)
+        assert not res.get("reflection"), res
+        assert _confirmed(res), res
+
+
+def test_clipped_glare_patch_is_vetoed_whatever_its_size():
+    for h, w in ((40, 50), (70, 90)):
+        c = _fresh()
+        res = illumination.analyze(_frames(c, _mirror_sized(h, w, 1.0)), c)
+        assert res["verdict"] == "reflection" and res["reflection_reason"] == "clipping", res
+
+
+def test_weak_unclipped_neutral_reflection_is_never_confirmed():
+    for _ in range(3):
+        c = _fresh()
+        res = illumination.analyze(_frames(c, _mirror_sized(40, 50, 0.5)), c)
+        assert not _confirmed(res), res
+
+
+def test_empty_or_tiny_input_is_handled():
+    c = _fresh()
+    assert illumination.analyze([], c)["verdict"] == "insufficient_frames"
+    one = [(0, np.zeros((H, W, 3), np.uint8))]
+    assert illumination.analyze(one, c)["verdict"] == "insufficient_frames"
+
+
+def test_frames_of_a_different_size_are_resized_not_crashed():
+    c = _fresh()
+    big = [(t, np.kron(f, np.ones((2, 2, 1), np.uint8))) for t, f in _frames(c, _face_sized(38, 45, 0.3))]
+    res = illumination.analyze(big, c)
+    assert res["verdict"] in ("ok", "no_variation", "reflection")
