@@ -6,16 +6,16 @@ HOP_S = 0.5
 BAND_LO_HZ = 0.4
 BAND_HI_HZ = 8.0
 MAX_LAG_S = 0.35
-# Tuned so the SLIGHTEST hand movement verifies -- by explicit product decision: a calm
-# user won't shake the phone, and a phone in a hand carries only ~0.01-0.05 rad/s of tremor.
-# The first gate (0.08) never counted that (0% of genuine 0.03-0.05 rad/s sessions verified in
-# simulation); 0.02 fixed 0.03+ but still missed the faintest tremor. Gyro noise is ~0.003,
-# so 0.008 is still above the sensor floor. Chosen by simulation (gate 0.008, trust 0.20, 3
-# windows, gain tolerance 2.0): genuine shakes of 0.008-0.015 rad/s verify 100% while
-# UNRELATED gyro/camera noise (a phone lying still showing a replay) passes only 0-4%.
-# Looser settings were measured too and are NOT free: trust 0.15 with 2 windows -> 36-40%
-# false accepts. tests/test_motion_sensitivity.py pins both sides.
-MOTION_GATE = 0.008  # rad/s RMS
+# Tuned so the SLIGHTEST movement verifies -- by explicit, repeated product decision: a
+# calm user won't shake the phone, and a phone in a hand carries only ~0.005-0.05 rad/s of
+# tremor. History: 0.08 never counted that (0% of genuine 0.03-0.05 rad/s sessions verified in
+# simulation); 0.02 and then 0.008 progressively fixed it; 0.004 now verifies motion right at
+# the gyro's own noise floor (~0.003). Simulated at gate 0.004, trust 0.15, 3 windows, gain
+# tolerance 2.0: genuine 0.004-0.015 rad/s verify 100% in 3-5 s; UNRELATED gyro/camera noise
+# (a phone lying still in front of a replay) passes ~6-21% -- this is the accepted cost of that
+# sensitivity (0.008/0.20: 0-4%; shortening to 2 windows measured 12-74%, for only 0.5 s
+# gain). tests/test_motion_sensitivity.py pins both sides.
+MOTION_GATE = 0.004  # rad/s RMS
 FRAME_W, FRAME_H = 160, 120
 TELEMETRY_FPS = 15
 CHUNK_MS = 500
@@ -39,7 +39,7 @@ NO_EVIDENCE_TIMEOUT_S = 10.0
 # unreachable in practice even with good real motion). Tighten back toward those targets
 # once there's real labelled genuine/attack data to fit fuse() against (see
 # eval/negative_control.py for the kind of check that should gate any change).
-P_TRUST, P_DEGRADE, P_SUSPECT = 0.20, 0.12, 0.04  # was 0.35/0.20/0.08; see MOTION_GATE note
+P_TRUST, P_DEGRADE, P_SUSPECT = 0.15, 0.10, 0.03  # was 0.35/0.20/0.08; see MOTION_GATE note
 # Fast to promote (3 windows ~= 1.5s of good evidence is enough to trust), slow to demote
 # (8-12 windows ~= 4-6s of SUSTAINED weak/bad evidence) -- a person calmly talking produces
 # occasional noisy, low-confidence motion windows that must not be able to single-handedly
