@@ -138,3 +138,43 @@ def test_colour_is_only_decoded_around_a_challenge_window():
     assert all(near_a_challenge(t) for t in engine.seen_color)
     # ...and plain gray frames exist outside those windows, so motion scoring is unaffected
     assert any(not near_a_challenge(t) for t, _ in engine.frames)
+
+
+# --- covered / dead camera must never verify ---
+
+def _covered(flash, base):
+    # Lens under a finger: almost featureless and dim; a little flash light leaks through.
+    return np.full((H, W, 3), 25.0) + flash[None, None, :] * 0.05
+
+
+def _black(flash, base):
+    return np.zeros((H, W, 3))
+
+
+def _gyro_chunks_run(response, seconds=30):
+    """Like _run but the phone is also being moved, so the motion channel has input."""
+    engine, states, last, _ = _run(response, seconds=seconds)
+    return engine, states, last
+
+
+def test_covered_camera_is_never_trusted():
+    engine, states, last = _gyro_chunks_run(_covered)
+    assert "TRUSTED" not in states, states
+    assert last.get("camera_blocked") is True
+
+
+def test_black_feed_is_never_trusted():
+    engine, states, last = _gyro_chunks_run(_black)
+    assert "TRUSTED" not in states, states
+
+
+def test_weak_flash_response_alone_is_not_trusted():
+    # A 0.17-ish illumination score (what a covered lens leaked) must not reach TRUSTED.
+    e = LivenessEngine(quick=True)
+    e.last_illum_score = {"verdict": "ok", "diffuse_ok": True, "S_illum": 0.17}
+    e.last_illum_score_ns = 1_000_000_000
+    for i in range(20):
+        frame = np.random.default_rng(i).integers(0, 255, (H, W), dtype=np.uint8)
+        ok, jpg = cv2.imencode(".jpg", frame)
+        res = e.ingest({"frames": [{"t_ns": 1_000_000_000 + i * STEP_NS, "jpeg_bytes": jpg.tobytes()}], "imu": {"gyro": []}})
+    assert res.get("trust_state") != "TRUSTED", res

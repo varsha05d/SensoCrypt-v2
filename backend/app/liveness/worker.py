@@ -40,6 +40,9 @@ ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust 
 # illumination.py) blocks trust for this long. A merely weak or inconclusive response does not. A challenge that correlates but fails the spatial test
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
 ILLUM_CONFIRM_MIN = 0.5
+BLOCKED_FRAMES = 8        # recent frames inspected for a covered / black camera
+BLOCKED_MEAN_MAX = 8.0    # 0-255: darker than this is no scene
+BLOCKED_STD_MAX = 6.0     # 0-255: flatter than this is no scene (lens under a finger)
 REFLECTION_VETO_S = 20.0
 
 
@@ -259,6 +262,17 @@ class LivenessEngine:
             result.update(verdict="reflection", reflection=True, diffuse_ok=False,
                           S_illum=0.0, reflection_reason="flat_plane")
 
+    def _camera_blocked(self) -> bool:
+        """True when the recent frames show no scene at all: a covered lens or a black feed.
+        A lens under a finger/hand is nearly uniform (tiny spatial std) or dark. Normal scenes,
+        even dim ones lit by the screen, keep a spatial std well above this floor."""
+        recent = [f for _, f in list(self.frames)[-BLOCKED_FRAMES:]]
+        if len(recent) < BLOCKED_FRAMES:
+            return False
+        mean = float(np.median([f.mean() for f in recent]))
+        std = float(np.median([f.std() for f in recent]))
+        return mean < BLOCKED_MEAN_MAX or std < BLOCKED_STD_MAX
+
     def _allow_trust(self, latest_ts: int) -> bool:
         """Only EVIDENCE OF A REFLECTION blocks trust. A weak, noisy or inconclusive flash
         response (flash swamped by ambient light, a camera whose auto-exposure fights the
@@ -330,8 +344,15 @@ class LivenessEngine:
             if illum_fresh and self.last_illum_score and self.last_illum_score.get("verdict") in ("ok", "reflection")
             else None
         )
-        vetoed = self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns
-        allow_trust = self._allow_trust(latest_ts)
+        # A weak flash response is not evidence of a face (a covered lens leaks some light
+        # too), and P_TRUST is low on purpose for the gyro channel -- so the flash only
+        # contributes to trust once it is strong enough to count as confirmed.
+        if s_illum is not None and s_illum < ILLUM_CONFIRM_MIN:
+            s_illum = None
+        blocked = self._camera_blocked()
+        result["camera_blocked"] = blocked
+        vetoed = (self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns) or blocked
+        allow_trust = self._allow_trust(latest_ts) and not blocked
         result["illum_confirmed"] = self.illum_confirmed
         result["illum_testable"] = self.illum_testable
         result["reflection_veto"] = vetoed
