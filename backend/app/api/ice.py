@@ -23,23 +23,43 @@ router = APIRouter(prefix="/api/v1", tags=["ice"])
 STUN_ONLY = [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]
 
 
+CREDENTIAL_TTL_S = 6 * 3600
+
+
+def _relay_servers(username: str, password: str) -> list[dict]:
+    return [
+        {
+            "urls": [
+                "turn:global.relay.metered.ca:80",
+                "turn:global.relay.metered.ca:80?transport=tcp",
+                "turn:global.relay.metered.ca:443",
+                "turns:global.relay.metered.ca:443?transport=tcp",
+            ],
+            "username": username,
+            "credential": password,
+        }
+    ]
+
+
 @router.get("/ice-servers")
 async def get_ice_servers(_: uuid.UUID = Depends(get_current_user_id)) -> dict:
     if not (settings.metered_app_name and settings.metered_api_key):
         return {"ice_servers": STUN_ONLY, "turn": False}
     try:
+        # METERED_API_KEY is the workspace SECRET key: it mints short-lived TURN credentials
+        # server-side, so the secret never reaches the phones.
         async with httpx.AsyncClient(timeout=6.0) as client:
-            r = await client.get(
-                f"https://{settings.metered_app_name}.metered.live/api/v1/turn/credentials",
-                params={"apiKey": settings.metered_api_key},
+            r = await client.post(
+                f"https://{settings.metered_app_name}.metered.live/api/v1/turn/credential",
+                params={"secretKey": settings.metered_api_key},
+                json={"expiryInSeconds": CREDENTIAL_TTL_S, "label": "sensocrypt-call"},
             )
             r.raise_for_status()
-            servers = r.json()
-        if isinstance(servers, list) and servers:
-            return {"ice_servers": STUN_ONLY + servers, "turn": True}
+            cred = r.json()
+        return {"ice_servers": STUN_ONLY + _relay_servers(cred["username"], cred["password"]), "turn": True}
     except httpx.HTTPStatusError as e:
         # Deliberately not logger.exception: the exception text contains the URL (and key).
-        logger.error("Metered rejected the TURN credentials request: HTTP %s; falling back to STUN only", e.response.status_code)
+        logger.error("Metered rejected the TURN credential request: HTTP %s; falling back to STUN only", e.response.status_code)
     except Exception as e:
         logger.error("could not fetch TURN credentials (%s); falling back to STUN only", type(e).__name__)
     return {"ice_servers": STUN_ONLY, "turn": False}
