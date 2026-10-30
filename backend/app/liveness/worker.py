@@ -14,7 +14,7 @@ from collections import deque
 import cv2
 import numpy as np
 
-from app.liveness import align, challenge as challenge_mod, egomotion, fusion, illumination, imu, score
+from app.liveness import align, challenge as challenge_mod, egomotion, fusion, illumination, imu, parallax, score
 from app.liveness.constants import (
     AXIS_MAP_FRONT,
     BAND_HI_HZ,
@@ -215,7 +215,9 @@ class LivenessEngine:
                     for t, f in self.color_frames
                     if self.active_challenge["start_at_ns"] <= t <= window_end
                 ]
-                self.last_illum_score = illumination.analyze(observed, self.active_challenge)
+                result = illumination.analyze(observed, self.active_challenge)
+                self._add_parallax_cue(result, self.active_challenge["start_at_ns"])
+                self.last_illum_score = result
                 self.last_illum_score_ns = latest_ts
                 self._apply_illumination_verdict(self.last_illum_score, latest_ts)
                 self.active_challenge = None
@@ -239,6 +241,23 @@ class LivenessEngine:
             if start - int(0.4e9) <= t_ns <= end + int(0.4e9):
                 return True
         return False
+
+    def _add_parallax_cue(self, result: dict, challenge_start_ns: int) -> None:
+        """Planarity cue from the un-flashed frames just before the challenge. Never decides
+        alone: a flat-plane result only turns an otherwise-passing response into a screen
+        verdict when the flash response is ALSO flat or colour-neutral."""
+        pre = [f for t, f in self.frames if t < challenge_start_ns][-(parallax.MAX_PAIRS + 1):]
+        try:
+            result.update(parallax.analyze(pre))
+        except cv2.error:
+            return
+        if (
+            result.get("verdict") == "ok" and result.get("diffuse_ok")
+            and result.get("cue_flat_plane")
+            and (result.get("cue_uniform") or result.get("cue_neutral"))
+        ):
+            result.update(verdict="reflection", reflection=True, diffuse_ok=False,
+                          S_illum=0.0, reflection_reason="flat_plane")
 
     def _allow_trust(self, latest_ts: int) -> bool:
         """Only EVIDENCE OF A REFLECTION blocks trust. A weak, noisy or inconclusive flash

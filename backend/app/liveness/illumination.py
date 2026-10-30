@@ -49,6 +49,10 @@ COMPACT_COVERAGE_FRACTION = 0.5  # ...lighting under half the cells a face would
 COVERAGE_FULL_CELLS = 6      # with colour: this many responding cells = full marks
 COVERAGE_FULL_CELLS_GRAY = 8 # without colour there is less to go on: ask for more spread
 TOP1_SOFT_MAX = 0.30         # above this, concentration starts to cost score
+UNIFORM_MIN_CELLS = 8        # the flat plateau must span at least this many core cells
+UNIFORM_CORE_FRACTION = 0.6  # cells at least this fraction of the peak gain form the "core"
+UNIFORM_CV_MAX = 0.12        # core gain spread (IQR/median) below this = flat plateau (screen-like)
+CHROMA_RATIO_NEUTRAL = 0.85  # blue/red gain at/above this = neutral colour response
 CHROMA_RATIO_SPECULAR = 0.85 # blue/red gain this close to 1 = neutral (mirror-like)
 CHROMA_FACTOR_SPECULAR = 0.3 # skin absorbs blue, so a neutral response is penalised
 LAG_CANDIDATES_MS = (0, 33, 66, 100, 133, 166, 200)
@@ -178,6 +182,21 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
         if ch_gain[0] > 1e-6:
             chroma = float(ch_gain[2] / ch_gain[0])  # blue gain / red gain
 
+    # Flatness: a laptop screen returns the flash as an even plateau, a curved face as an
+    # uneven map (nose/forehead bright, cheeks and edges falling off).
+    # Robust spread (interquartile range / median) rather than std/mean, so the partly-lit
+    # cells at a screen's edge don't make a plateau look uneven.
+    # Only the core cells (within 60% of the peak) are judged: the rim of a screen's image
+    # is partly lit and says nothing about flatness.
+    gain_cv = None
+    core = pos[responding & (pos >= UNIFORM_CORE_FRACTION * max_gain)]
+    if core.size >= UNIFORM_MIN_CELLS:
+        g = core
+        med = float(np.median(g))
+        gain_cv = float((np.percentile(g, 75) - np.percentile(g, 25)) / med) if med > 1e-9 else None
+    cue_uniform = gain_cv is not None and gain_cv < UNIFORM_CV_MAX
+    cue_neutral = chroma is not None and chroma >= CHROMA_RATIO_NEUTRAL
+
     features = {
         "n": n,
         "lag_ms": lag_ms,
@@ -186,6 +205,9 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
         "top1_share": top1_share,
         "clip_delta": clip_delta,
         "blue_red_ratio": chroma,
+        "gain_cv": gain_cv,
+        "cue_uniform": cue_uniform,
+        "cue_neutral": cue_neutral,
     }
 
     if r < GLOBAL_R_MIN:
@@ -198,8 +220,13 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
     # Strong, flash-locked response confined to less than half of what a face covers:
     # that is the signature of a mirrored screen, not of a lit face.
     compact = r >= COMPACT_R_MIN and coverage < COMPACT_COVERAGE_FRACTION * full_cells
-    if clipped or hotspot or compact:
-        reason = "clipping" if clipped else ("hotspot" if hotspot else "compact")
+    # Screen-like: two independent cues (flat response + neutral colour) agree. One alone is
+    # not enough -- AWB can neutralise skin on some phones, and a flat patch can be a small face.
+    screen = cue_uniform and cue_neutral
+    if clipped or hotspot or compact or screen:
+        reason = (
+            "clipping" if clipped else "hotspot" if hotspot else "compact" if compact else "flat_neutral"
+        )
         return {
             "verdict": "reflection", "S_illum": 0.0, "reflection": True, "diffuse_ok": False,
             "reflection_reason": reason, **features,
