@@ -14,7 +14,7 @@ from collections import deque
 import cv2
 import numpy as np
 
-from app.liveness import align, challenge as challenge_mod, egomotion, fusion, imu, score
+from app.liveness import align, challenge as challenge_mod, egomotion, fusion, illumination, imu, score
 from app.liveness.constants import (
     AXIS_MAP_FRONT,
     BAND_HI_HZ,
@@ -31,11 +31,18 @@ AXIS_MAP_LOCK_MIN_SCORE = 0.3
 AXIS_MAP_MIN_ENERGY = MOTION_GATE * 2  # needs clearly-real motion, not just above the noise floor
 CHALLENGE_END_MARGIN_S = 0.3
 ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust indefinitely
+# TRUSTED now requires a clean illumination pass (a diffuse, face-like response to the
+# flash), not just motion evidence -- motion alone says the camera is live, not that a real
+# face is lit by OUR screen. A challenge that correlates but fails the spatial test
+# (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
+ILLUM_CONFIRM_MIN = 0.5
+REFLECTION_VETO_S = 20.0
 
 
 class LivenessEngine:
     def __init__(self, quick: bool = False):
         self.frames: deque[tuple[int, np.ndarray]] = deque()
+        self.color_frames: deque[tuple[int, np.ndarray]] = deque()  # BGR, same timestamps
         self.gyro: deque[tuple[int, float, float, float]] = deque()
         self.K = egomotion.intrinsics(160, 120)
         self.locked_lag: int | None = None
@@ -57,11 +64,16 @@ class LivenessEngine:
         self.last_motion_ok_ns: int | None = None
 
         self.trust_fsm = fusion.TrustFSM()
+        self.illum_confirmed = False
+        self.reflection_until_ns: int | None = None
+        self.reflection_count = 0
 
     def _trim(self, latest_ns: int):
         cutoff = latest_ns - int(BUFFER_S * 1e9)
         while self.frames and self.frames[0][0] < cutoff:
             self.frames.popleft()
+        while self.color_frames and self.color_frames[0][0] < cutoff:
+            self.color_frames.popleft()
         while self.gyro and self.gyro[0][0] < cutoff:
             self.gyro.popleft()
 
@@ -193,12 +205,13 @@ class LivenessEngine:
             window_end = self.active_challenge["start_at_ns"] + total_dur_ns
             if latest_ts >= window_end + int(CHALLENGE_END_MARGIN_S * 1e9):
                 observed = [
-                    (t, self._center_brightness(f))
-                    for t, f in self.frames
+                    (t, f)
+                    for t, f in self.color_frames
                     if self.active_challenge["start_at_ns"] <= t <= window_end
                 ]
-                self.last_illum_score = challenge_mod.illumination_score(observed, self.active_challenge)
+                self.last_illum_score = illumination.analyze(observed, self.active_challenge)
                 self.last_illum_score_ns = latest_ts
+                self._apply_illumination_verdict(self.last_illum_score, latest_ts)
                 self.active_challenge = None
 
         if self.active_challenge is None and self.pending_challenge is not None:
@@ -207,11 +220,24 @@ class LivenessEngine:
 
         return new_challenge
 
+    def _apply_illumination_verdict(self, result: dict, latest_ts: int) -> None:
+        if result.get("reflection"):
+            # Looked like a lit face by brightness alone, but the light came back as a
+            # compact/clipped hot spot: a glossy screen mirroring our flash. Revoke any
+            # earlier confirmation and block trust until a clean challenge passes.
+            self.illum_confirmed = False
+            self.reflection_count += 1
+            self.reflection_until_ns = latest_ts + int(REFLECTION_VETO_S * 1e9)
+            self.trust_fsm.veto()
+        elif result.get("verdict") == "ok" and result.get("diffuse_ok") and result.get("S_illum", 0.0) >= ILLUM_CONFIRM_MIN:
+            self.illum_confirmed = True
+
     def ingest(self, chunk: dict) -> dict:
         for f in chunk.get("frames", []):
-            arr = cv2.imdecode(np.frombuffer(f["jpeg_bytes"], dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-            if arr is not None:
-                self.frames.append((f["t_ns"], arr))
+            color = cv2.imdecode(np.frombuffer(f["jpeg_bytes"], dtype=np.uint8), cv2.IMREAD_COLOR)
+            if color is not None:
+                self.color_frames.append((f["t_ns"], color))
+                self.frames.append((f["t_ns"], cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)))
         for t_ns, wx, wy, wz in chunk.get("imu", {}).get("gyro", []):
             self.gyro.append((t_ns, wx, wy, wz))
 
@@ -246,13 +272,20 @@ class LivenessEngine:
         s_a = result.get("S_A") if result.get("verdict") == "ok" else None
         s_illum = (
             self.last_illum_score.get("S_illum")
-            if illum_fresh and self.last_illum_score and self.last_illum_score.get("verdict") == "ok"
+            if illum_fresh and self.last_illum_score and self.last_illum_score.get("verdict") in ("ok", "reflection")
             else None
         )
+        vetoed = self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns
+        allow_trust = self.illum_confirmed and not vetoed
+        result["illum_confirmed"] = self.illum_confirmed
+        result["reflection_veto"] = vetoed
+        result["reflection_count"] = self.reflection_count
         if s_a is not None or s_illum is not None:
             p = fusion.fuse(s_a, s_illum)
+            if vetoed:
+                p = 0.0
             result["p_trust"] = p
-            result["trust_state"] = self.trust_fsm.update(p)
+            result["trust_state"] = self.trust_fsm.update(p, allow_trust=allow_trust)
         else:
             result["trust_state"] = self.trust_fsm.state
 

@@ -55,7 +55,6 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
 
     var onIceCandidate: ((IceCandidate) -> Unit)? = null
     var onRemoteVideoTrack: ((VideoTrack) -> Unit)? = null
-    var onRemoteAudioTrack: ((AudioTrack) -> Unit)? = null
 
     init {
         PeerConnectionFactory.initialize(
@@ -86,24 +85,7 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
         // WebRtcFrameSink) -- avoids a second camera session fighting this one for access.
         livenessFrameSink?.let { videoTrack.addSink(it) }
 
-        // Voice-detection experiment: WebRTC's audio processing module runs echo
-        // cancellation / auto-gain-control / noise-suppression on the OUTGOING mic signal
-        // before it's encoded and sent -- which is exactly what the far side's
-        // AI-vs-human voice detector ends up analyzing. Those algorithms can introduce
-        // artifacts (spectral smoothing, gain pumping) that a model trained on clean,
-        // unprocessed speech was never exposed to, and are a plausible contributor to the
-        // "same real voice flips between human/ai_generated" instability seen in testing.
-        // Disabling them here is free and reversible; if this doesn't meaningfully help,
-        // the real fix is a model trained/evaluated on compressed VoIP audio (see
-        // VOICE_DETECTION.md's known-limitation section).
-        val audioConstraints = MediaConstraints().apply {
-            optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "false"))
-            optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
-            optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "false"))
-            optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "false"))
-            optional.add(MediaConstraints.KeyValuePair("googTypingNoiseDetection", "false"))
-        }
-        val audioSource: AudioSource = factory.createAudioSource(audioConstraints)
+        val audioSource: AudioSource = factory.createAudioSource(MediaConstraints())
         val audioTrack: AudioTrack = factory.createAudioTrack("audio0", audioSource)
         localAudioTrack = audioTrack
 
@@ -139,12 +121,7 @@ class WebRtcSession(private val context: Context, private val eglBase: EglBase) 
 
                 override fun onTrack(transceiver: RtpTransceiver?) {
                     val track = transceiver?.receiver?.track()
-                    Log.i("SensoCrypt", "onTrack: kind=${track?.kind()} id=${track?.id()}")
-                    when (track) {
-                        is VideoTrack -> onRemoteVideoTrack?.invoke(track)
-                        is AudioTrack -> onRemoteAudioTrack?.invoke(track)
-                        else -> Unit
-                    }
+                    if (track is VideoTrack) onRemoteVideoTrack?.invoke(track)
                 }
 
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit

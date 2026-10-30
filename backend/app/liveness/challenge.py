@@ -17,7 +17,13 @@ import uuid
 import numpy as np
 
 CHALLENGE_STATES = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255), (0, 0, 0)]
-STATE_DURATION_MS = 220
+# Every challenge flashes each primary, white and black at least once (so the colour and
+# spatial analysis in illumination.py always has all three channels and a dark baseline),
+# plus extras for unpredictability. Longer states than before: ~27 frames per challenge at
+# 15fps instead of ~13, which is what the per-region regression needs.
+_REQUIRED_STATES = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255), (0, 0, 0)]
+_EXTRA_STATES = [(255, 255, 0), (0, 255, 255), (255, 0, 255), (255, 255, 255), (0, 0, 0)]
+STATE_DURATION_MS = 300
 # Time between issuing a challenge and it starting, to absorb network + render latency
 # before the client needs to flip the screen color. 1.0s was fine for local-LAN testing
 # (~1-5ms round trip) but was measured arriving 1.48s late over the real internet to a
@@ -32,8 +38,13 @@ def _luma(rgb: tuple[int, int, int]) -> float:
     return 0.299 * r + 0.587 * g + 0.114 * b
 
 
-def generate_challenge(start_at_ns: int, n_states: int = 4) -> dict:
-    states = [random.choice(CHALLENGE_STATES) for _ in range(n_states)]
+def generate_challenge(start_at_ns: int, n_states: int = 6) -> dict:
+    states = list(_REQUIRED_STATES) + [random.choice(_EXTRA_STATES) for _ in range(max(0, n_states - len(_REQUIRED_STATES)))]
+    # Shuffle until no two neighbours match (a repeated colour is a wasted, longer state).
+    for _ in range(50):
+        random.shuffle(states)
+        if all(a != b for a, b in zip(states, states[1:])):
+            break
     return {
         "id": uuid.uuid4().hex[:8],
         "states": [{"rgb": list(s), "dur_ms": STATE_DURATION_MS} for s in states],

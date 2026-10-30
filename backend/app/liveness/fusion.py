@@ -37,8 +37,19 @@ class TrustFSM:
         self._suspect_streak = 0
         self._recover_streak = 0  # consecutive windows with p >= P_DEGRADE, used to leave SUSPECT gradually
 
-    def update(self, p: float) -> str:
-        self._trust_streak = self._trust_streak + 1 if p >= P_TRUST else 0
+    def veto(self) -> None:
+        """A reflection attack was detected: drop to SUSPECT immediately and clear the
+        streaks, so earlier motion evidence can't carry the session to TRUSTED."""
+        if self.state != "TRUSTED":
+            self.state = "SUSPECT"
+        self._trust_streak = 0
+        self._recover_streak = 0
+
+    def update(self, p: float, allow_trust: bool = True) -> str:
+        # allow_trust=False blocks promotion to TRUSTED no matter how good p is: the worker
+        # withholds it until an illumination challenge has passed the face-like spatial test
+        # (and while a reflection veto is active).
+        self._trust_streak = self._trust_streak + 1 if (p >= P_TRUST and allow_trust) else 0
         self._degrade_streak = self._degrade_streak + 1 if p < P_DEGRADE else 0
         self._suspect_streak = self._suspect_streak + 1 if p < P_SUSPECT else 0
         self._recover_streak = self._recover_streak + 1 if p >= P_DEGRADE else 0

@@ -239,6 +239,26 @@ private fun VerifyScreenContent(
         }
     }
 
+    // The illumination check needs the flash to be as strong as the screen can make it:
+    // at default brightness a dim screen barely lights the face, and the weaker the
+    // response the harder it is to tell a real face from a reflection. Restored on exit.
+    DisposableEffect(Unit) {
+        var ctx: android.content.Context = context
+        while (ctx is android.content.ContextWrapper && ctx !is android.app.Activity) ctx = ctx.baseContext
+        val window = (ctx as? android.app.Activity)?.window
+        val previous = window?.attributes?.screenBrightness
+        window?.let { w ->
+            w.attributes = w.attributes.apply { screenBrightness = 1f }
+        }
+        onDispose {
+            window?.let { w ->
+                w.attributes = w.attributes.apply {
+                    screenBrightness = previous ?: android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                }
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         VerifyCameraFeed(
             synchronizer = synchronizer,

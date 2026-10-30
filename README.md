@@ -126,9 +126,20 @@ each one is documented in `backend/app/core/config.py`.
 `render.yaml` at the repo root defines this app's Render Blueprint (web service + a free
 Postgres database). The Android app's `net/BackendConfig.kt` points at that deployed URL.
 
-## A related, separate feature in progress
+## Illumination check (reflection-resistant)
 
-There's an in-progress `voice-detection` branch adding **AI-vs-human voice detection**
-during a call (is the *voice* on the other end synthetic, separate from the *device*
-liveness checks above). Deliberately kept off this branch until it's further along — see
-that branch's own `VOICE_DETECTION.md` for what it does and its current known limitations.
+Besides gyroscope-vs-camera correlation, verification flashes a random colour sequence
+(every challenge includes red, green, blue, white and black) and scores how the camera sees
+it with `backend/app/liveness/illumination.py`:
+
+- the frame is split into a 6x8 grid and each cell is regressed against the flash;
+- a real face lights **many neighbouring cells smoothly**; a phone screen held to the camera
+  mirrors the flash as a **compact, bright, often clipped hot spot**, which is flagged as a
+  REFLECTION (an attack signal, not weak evidence) and vetoes trust for 20 s;
+- with colour frames, skin's blue/red response ratio is checked (glass is neutral);
+- `TRUSTED` now requires a clean illumination pass, not motion evidence alone.
+
+The phone sends colour frames (`android/.../capture/FrameCapture.kt`) and raises screen
+brightness to maximum during verification. All feature values are included in the verdict
+JSON logged by `VerifyScreen`, so thresholds in `illumination.py` can be tuned against real
+genuine/replay captures.
