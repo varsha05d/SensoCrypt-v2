@@ -44,6 +44,10 @@ def _relay_servers(username: str, password: str) -> list[dict]:
 @router.get("/ice-servers")
 async def get_ice_servers(_: uuid.UUID = Depends(get_current_user_id)) -> dict:
     if not (settings.metered_app_name and settings.metered_api_key):
+        logger.warning(
+            "TURN not configured: METERED_APP_NAME set=%s, METERED_API_KEY set=%s; serving STUN only",
+            bool(settings.metered_app_name), bool(settings.metered_api_key),
+        )
         return {"ice_servers": STUN_ONLY, "turn": False}
     try:
         # METERED_API_KEY is the workspace SECRET key: it mints short-lived TURN credentials
@@ -56,6 +60,7 @@ async def get_ice_servers(_: uuid.UUID = Depends(get_current_user_id)) -> dict:
             )
             r.raise_for_status()
             cred = r.json()
+        logger.info("TURN credentials minted; serving relay servers")
         return {"ice_servers": STUN_ONLY + _relay_servers(cred["username"], cred["password"]), "turn": True}
     except httpx.HTTPStatusError as e:
         # Deliberately not logger.exception: the exception text contains the URL (and key).
