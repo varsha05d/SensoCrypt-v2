@@ -36,10 +36,8 @@ AXIS_MAP_LOCK_MIN_SCORE = 0.45
 AXIS_MAP_MIN_ENERGY = MOTION_GATE * 2  # needs clearly-real motion, not just above the noise floor
 CHALLENGE_END_MARGIN_S = 0.3
 ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust indefinitely
-# Once the illumination channel has produced a usable verdict, TRUSTED requires a clean pass
-# (a diffuse, face-like response to the flash), not just motion evidence -- motion alone says
-# the camera is live, not that a real face is lit by OUR screen. (Before any usable verdict
-# the channel is "untestable" and motion alone may carry trust; see illum_testable.) A challenge that correlates but fails the spatial test
+# A challenge that responds like a mirrored screen (clipping / hot spot / compact patch --
+# illumination.py) blocks trust for this long. A merely weak or inconclusive response does not. A challenge that correlates but fails the spatial test
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
 ILLUM_CONFIRM_MIN = 0.5
 REFLECTION_VETO_S = 20.0
@@ -71,11 +69,7 @@ class LivenessEngine:
 
         self.trust_fsm = fusion.TrustFSM()
         self.illum_confirmed = False
-        # Set once ANY challenge produced a usable verdict ("ok" or "reflection"). Until then
-        # the illumination channel is untestable on this device/room (flash swamped by
-        # ambient light, challenge skipped as late, ...) and motion evidence alone must be
-        # allowed to carry trust -- otherwise a phone whose flash never registers can never
-        # verify at all (observed: the check timed out on genuine calls).
+        # Informational (logged): a challenge produced a usable verdict (ok/reflection).
         self.illum_testable = False
         self.reflection_until_ns: int | None = None
         self.reflection_count = 0
@@ -247,12 +241,12 @@ class LivenessEngine:
         return False
 
     def _allow_trust(self, latest_ts: int) -> bool:
-        vetoed = self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns
-        if vetoed:
-            return False
-        # A testable illumination channel must have passed; an untestable one must not
-        # lock the user out (see illum_testable).
-        return self.illum_confirmed or not self.illum_testable
+        """Only EVIDENCE OF A REFLECTION blocks trust. A weak, noisy or inconclusive flash
+        response (flash swamped by ambient light, a camera whose auto-exposure fights the
+        flash, a challenge skipped as late) must not: requiring a clean illumination pass
+        left one of two test phones unable to verify while the other, whose flash was
+        simply unreadable, verified at once."""
+        return not (self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns)
 
     def _apply_illumination_verdict(self, result: dict, latest_ts: int) -> None:
         if result.get("verdict") in ("ok", "reflection"):

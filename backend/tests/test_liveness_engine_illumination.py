@@ -105,24 +105,18 @@ def test_a_reflection_after_a_clean_pass_revokes_confirmation():
     assert engine.trust_fsm.state == "SUSPECT"
 
 
-def test_untestable_illumination_does_not_lock_the_user_out():
-    # Flash swamped by ambient light / challenge skipped: no usable verdict ever arrives,
-    # so motion evidence alone must be allowed to carry trust.
+def test_inconclusive_illumination_does_not_block_trust():
+    # Flash swamped by ambient light / camera auto-exposure fighting the flash / challenge
+    # skipped: none of these is evidence of an attack, so motion evidence may carry trust.
     e = LivenessEngine(quick=True)
-    assert not e.illum_testable
     assert e._allow_trust(1_000_000_000)
+    e._apply_illumination_verdict({"verdict": "no_variation", "S_illum": 0.0}, 1_000_000_000)
+    assert e._allow_trust(2_000_000_000)
+    e._apply_illumination_verdict({"verdict": "ok", "diffuse_ok": True, "S_illum": 0.0, "r": -0.9}, 3_000_000_000)
+    assert e._allow_trust(4_000_000_000)          # weak/negative response: still allowed
 
 
-def test_once_illumination_is_testable_a_pass_is_required():
-    e = LivenessEngine(quick=True)
-    e._apply_illumination_verdict({"verdict": "ok", "diffuse_ok": True, "S_illum": 0.2}, 1_000_000_000)
-    assert e.illum_testable and not e.illum_confirmed
-    assert not e._allow_trust(2_000_000_000)          # weak/neutral response: not enough
-    e._apply_illumination_verdict({"verdict": "ok", "diffuse_ok": True, "S_illum": 0.9}, 3_000_000_000)
-    assert e._allow_trust(4_000_000_000)
-
-
-def test_a_reflection_blocks_trust_even_if_the_channel_was_untestable_before():
+def test_a_reflection_blocks_trust():
     e = LivenessEngine(quick=True)
     e._apply_illumination_verdict({"verdict": "reflection", "reflection": True}, 1_000_000_000)
     assert not e._allow_trust(2_000_000_000)

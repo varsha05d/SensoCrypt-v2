@@ -140,3 +140,13 @@ def test_frames_of_a_different_size_are_resized_not_crashed():
     big = [(t, np.kron(f, np.ones((2, 2, 1), np.uint8))) for t, f in _frames(c, _face_sized(38, 45, 0.3))]
     res = illumination.analyze(big, c)
     assert res["verdict"] in ("ok", "no_variation", "reflection")
+
+
+def test_neutral_compact_patch_is_not_confirmed_as_a_face():
+    # ~4 cells, neutral colour: too ambiguous to veto (a genuine face held far away lights about
+    # as many cells) but it must not be CONFIRMED as a lit face -- the neutral colour response
+    # cuts its score below the confirmation level.
+    for _ in range(3):
+        c = _fresh()
+        res = illumination.analyze(_frames(c, _mirror_sized(28, 34, 0.8)), c)
+        assert not _confirmed(res), res

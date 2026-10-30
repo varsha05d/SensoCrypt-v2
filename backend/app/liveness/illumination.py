@@ -40,6 +40,8 @@ CELL_GAIN_REL_MIN = 0.25     # ...and its gain is at least this fraction of the 
 CLIP_DELTA_MAX = 0.05        # the flash drives >5% of the frame into clipping: glare
 HOTSPOT_MAX_CELLS = 2        # response confined to <=2 cells...
 HOTSPOT_TOP1_MIN = 0.40      # ...carrying >=40% of the total: a single compact hot spot
+COMPACT_R_MIN = 0.80         # a very strong flash response...
+COMPACT_COVERAGE_FRACTION = 0.5  # ...lighting under half the cells a face would: mirrored screen
 
 # SOFT cues -- ambiguous on their own (a genuine face held at arm's length lights only ~6
 # cells, about what a medium glare patch does), so they scale the score down instead of
@@ -192,10 +194,15 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
     # Hard signatures: unambiguous glare, veto outright.
     clipped = clip_delta > CLIP_DELTA_MAX
     hotspot = coverage <= HOTSPOT_MAX_CELLS and top1_share >= HOTSPOT_TOP1_MIN
-    if clipped or hotspot:
+    full_cells = COVERAGE_FULL_CELLS if chroma is not None else COVERAGE_FULL_CELLS_GRAY
+    # Strong, flash-locked response confined to less than half of what a face covers:
+    # that is the signature of a mirrored screen, not of a lit face.
+    compact = r >= COMPACT_R_MIN and coverage < COMPACT_COVERAGE_FRACTION * full_cells
+    if clipped or hotspot or compact:
+        reason = "clipping" if clipped else ("hotspot" if hotspot else "compact")
         return {
             "verdict": "reflection", "S_illum": 0.0, "reflection": True, "diffuse_ok": False,
-            "reflection_reason": "clipping" if clipped else "hotspot", **features,
+            "reflection_reason": reason, **features,
         }
 
     # Soft cues: graded, so a genuine user with a smaller / further face still passes.
