@@ -55,3 +55,4 @@ async def test_mints_credentials_with_secret_key(monkeypatch):
     relay = res["ice_servers"][-1]
     assert relay["username"] == "u" and relay["credential"] == "p"
     assert any(u.startswith("turn:global.relay.metered.ca") for u in relay["urls"])
+    ice._cached.update(cred=None, expires_at=0.0)  # don't leak into other tests

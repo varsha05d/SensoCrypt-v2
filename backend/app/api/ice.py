@@ -6,6 +6,7 @@ cannot reach each other (symmetric NAT / carrier NAT) and the call connects with
 """
 
 import logging
+import time
 import uuid
 
 import httpx
@@ -24,6 +25,9 @@ STUN_ONLY = [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:
 
 
 CREDENTIAL_TTL_S = 6 * 3600
+# Metered recommends minting credentials ahead of time and reusing them (a new one takes up to
+# ~2 minutes to propagate), so keep one per process until shortly before it expires.
+_cached: dict = {"cred": None, "expires_at": 0.0}
 
 
 def _relay_servers(username: str, password: str) -> list[dict]:
@@ -49,6 +53,9 @@ async def get_ice_servers(_: uuid.UUID = Depends(get_current_user_id)) -> dict:
             bool(settings.metered_app_name), bool(settings.metered_api_key),
         )
         return {"ice_servers": STUN_ONLY, "turn": False}
+    cred = _cached["cred"]
+    if cred is not None and time.monotonic() < _cached["expires_at"]:
+        return {"ice_servers": STUN_ONLY + _relay_servers(cred["username"], cred["password"]), "turn": True}
     try:
         # METERED_API_KEY is the workspace SECRET key: it mints short-lived TURN credentials
         # server-side, so the secret never reaches the phones.
@@ -60,11 +67,15 @@ async def get_ice_servers(_: uuid.UUID = Depends(get_current_user_id)) -> dict:
             )
             r.raise_for_status()
             cred = r.json()
+        _cached.update(cred=cred, expires_at=time.monotonic() + CREDENTIAL_TTL_S - 600)
         logger.info("TURN credentials minted; serving relay servers")
         return {"ice_servers": STUN_ONLY + _relay_servers(cred["username"], cred["password"]), "turn": True}
     except httpx.HTTPStatusError as e:
         # Deliberately not logger.exception: the exception text contains the URL (and key).
-        logger.error("Metered rejected the TURN credential request: HTTP %s; falling back to STUN only", e.response.status_code)
+        logger.error(
+            "Metered rejected the TURN credential request: HTTP %s body=%r; falling back to STUN only",
+            e.response.status_code, e.response.text[:300],
+        )
     except Exception as e:
         logger.error("could not fetch TURN credentials (%s); falling back to STUN only", type(e).__name__)
     return {"ice_servers": STUN_ONLY, "turn": False}
