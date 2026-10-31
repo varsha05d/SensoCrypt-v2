@@ -20,7 +20,9 @@ Each verification line in the Render logs looks like:
 verdict=ok r=0.71 S_A=0.45 … illum_verdict=ok S_illum=0.98 … state=TRUSTED channel_A=True channel_B=True camera_blocked=False side=caller
 ```
 
-`channel_A` = gyroscope-vs-camera motion check passed. `channel_B` = screen-flash (colour challenge) confirmed a real face-like response. **Trust requires both.**
+`channel_A` = gyroscope-vs-camera motion check passed. `channel_B` = screen-flash (colour challenge) confirmed a real face-like response.
+
+**Verification policy (default):** the **gyroscope**, the **accelerometer** and the **illumination (screen flash)** checks run together and **any one passing verifies the session**. The log line shows `passes={'gyro':…,'accelerometer':…,'illumination':…}` and `verified_via=gyro|accelerometer|illumination`; call history shows e.g. *"Caller (you): verified via gyroscope"*. A covered camera or a screen / photo / glare reflection **blocks all three**. The gyro and accelerometer only count once the first flash has been scored (about 3 s), so a screen cannot verify on movement before the flash has a chance to recognise it. Set `LIVENESS_STRICT=1` on Render to require both movement and flash instead.
 
 One line is logged per call outcome:
 
@@ -62,6 +64,7 @@ Failure reasons: `timeout`, `no_motion`, `flash_not_confirmed`, `reflection_dete
 - **Known limit:** a matte print has a flat, skin-coloured flash response. The screen checks (flat + neutral colour, no depth parallax) are tuned on synthetic data; record the real result for each of the three photo types above and note it in this document.
 
 ## TC05 — Device held completely still → Channel A insufficient
+> Under the default any-of-three policy a still device with a **real face** still verifies, via **illumination** (`verified_via=illumination`). To show a still device failing, point it at nothing face-like (or set `LIVENESS_STRICT=1`).
 - **Do:** Put the phone on a stand/table so it cannot move; start verification with a real face in view.
 - **Render proof:** `verdict=no_evidence` (no `S_A`), `channel_A=False`, `state=DEGRADED`; then `VERIFICATION_RESULT … reason=no_motion`.
 - **App proof:** the app asks the user to move the phone ("motion prompt"), and after 30 s shows the failure.

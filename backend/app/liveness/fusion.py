@@ -37,6 +37,10 @@ class TrustFSM:
         self._suspect_streak = 0
         self._recover_streak = 0  # consecutive windows with p >= P_DEGRADE, used to leave SUSPECT gradually
 
+    def promote(self) -> None:
+        """A named check (gyro / accelerometer / flash) has passed: trusted now, no dwell."""
+        self.state = "TRUSTED"
+
     def veto(self) -> None:
         """A reflection attack was detected: drop to SUSPECT immediately and clear the
         streaks, so earlier motion evidence can't carry the session to TRUSTED."""

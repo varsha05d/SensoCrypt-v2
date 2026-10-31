@@ -364,3 +364,58 @@ def test_tablet_resting_on_a_table_is_not_trusted():
 def test_tablet_that_moves_but_shows_a_screen_is_not_trusted():
     engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=None, drift=0.0, accel="moving")
     assert "TRUSTED" not in states, states
+
+
+# --- default policy: ANY of gyro / accelerometer / illumination verifies, and says which ---
+
+def _flat_scene(flash, base):
+    return base  # the flash leaves no trace on the picture
+
+
+def test_gyro_alone_verifies_and_is_reported_as_gyro():
+    engine, states, last, _ = _run(_flat_scene, motion=MOVING, accel="still")
+    assert "TRUSTED" in states and last["verified_via"] == "gyro", last["verified_via"]
+    assert last["passes"]["illumination"] is False and last["passes"]["accelerometer"] is False
+
+
+def test_accelerometer_alone_verifies_and_is_reported_as_accelerometer():
+    # the device has a gyro that reads nothing (still), but it is physically being moved
+    engine, states, last, _ = _run(_flat_scene, motion=STILL, accel="moving")
+    assert "TRUSTED" in states and last["verified_via"] == "accelerometer", last["verified_via"]
+
+
+def test_illumination_alone_verifies_and_is_reported_as_illumination():
+    # a real face under the flash on a device that is not moving at all
+    engine, states, last, _ = _run(_face, motion=STILL, accel="still")
+    assert "TRUSTED" in states and last["verified_via"] == "illumination", last["verified_via"]
+    assert last["passes"]["gyro"] is False and last["passes"]["accelerometer"] is False
+
+
+def test_all_three_failing_is_not_verified():
+    engine, states, last, _ = _run(_flat_scene, motion=STILL, accel="still")
+    assert "TRUSTED" not in states and last["verified_via"] is None
+    assert not any(last["passes"].values())
+
+
+def test_a_screen_blocks_even_a_moving_device():
+    # laptop-screen case: the gyro would pass, but the flash shows a flat neutral screen
+    engine, states, last, _ = _run(_flat_neutral_screen, motion=MOVING, accel="moving")
+    assert engine.reflection_count >= 1
+    assert "TRUSTED" not in states and last["verified_via"] is None, states
+
+
+def test_a_covered_camera_blocks_even_a_moving_device():
+    engine, states, last, _ = _run(_covered, motion=MOVING, accel="moving")
+    assert last["camera_blocked"] is True
+    assert "TRUSTED" not in states, states
+
+
+def test_the_reported_reason_matches_the_call_log_status():
+    from app.core.call_coordinator import side_status
+
+    assert side_status({"trust_state": "TRUSTED", "verified_via": "accelerometer"}) == "verified_accelerometer"
+    assert side_status({"trust_state": "TRUSTED", "verified_via": "gyro"}) == "verified_gyro"
+    assert side_status({"trust_state": "TRUSTED", "verified_via": "illumination"}) == "verified_illumination"
+    assert side_status({"trust_state": "SUSPECT", "reflection_count": 1}) == "reflection_detected"
+    assert side_status({"trust_state": "DEGRADED", "camera_blocked": True}) == "camera_blocked"
+    assert side_status({"trust_state": "DEGRADED"}) == "no_evidence"

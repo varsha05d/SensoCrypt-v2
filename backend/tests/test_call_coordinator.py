@@ -140,7 +140,7 @@ async def test_tc07_unverified_call_times_out_blocked_with_reason(monkeypatch):
     cc.report("tc07", "callee", {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": True})
     assert await asyncio.wait_for(cc.wait_for_outcome("tc07"), 2) == "failed"
     assert not cc.is_verified("tc07")
-    assert saved["state"] == "FAILED_VERIFICATION" and saved["failure_reason"] == "caller=verified,callee=no_motion"
+    assert saved["state"] == "FAILED_VERIFICATION" and saved["failure_reason"] == "caller=verified,callee=no_evidence"
     cc.clear("tc07")
 
 
@@ -154,7 +154,7 @@ def test_summary_names_the_side_that_did_not_move():
         "caller": {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": True},
         "callee": {"trust_state": "TRUSTED"},
     }
-    assert sides_summary(reports) == "caller=no_motion,callee=verified"
+    assert sides_summary(reports) == "caller=no_evidence,callee=verified"
 
 
 def test_summary_when_the_receiver_is_the_one_who_failed():
@@ -162,13 +162,11 @@ def test_summary_when_the_receiver_is_the_one_who_failed():
         "caller": {"trust_state": "TRUSTED"},
         "callee": {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": False},
     }
-    assert sides_summary(reports) == "caller=verified,callee=no_motion"
+    assert sides_summary(reports) == "caller=verified,callee=no_evidence"
 
 
 def test_summary_both_verified_and_missing_side():
     ok = {"trust_state": "TRUSTED"}
     assert sides_summary({"caller": ok, "callee": ok}) == "caller=verified,callee=verified"
     assert sides_summary({"caller": ok}) == "caller=verified,callee=no_telemetry"
-    # a phone with no gyro: no visible camera movement -> no_motion; moving but flash unconfirmed -> flash
-    assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True}) == "no_motion"
-    assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True, "video_motion_pass": True}) == "flash_not_confirmed"
+    assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True}) == "no_evidence"

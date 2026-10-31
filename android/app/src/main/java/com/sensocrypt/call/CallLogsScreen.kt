@@ -229,14 +229,24 @@ private fun sideResults(entry: CallLogEntry): List<SideResult> {
         if (status == null) return@mapNotNull null
         val isMe = (side == "caller" && entry.direction == "outgoing") || (side == "callee" && entry.direction == "incoming")
         val who = (if (side == "caller") "Caller" else "Receiver") + if (isMe) " (you)" else ""
-        SideResult(who, if (status == "verified") "verified" else sideFailureText(status), status == "verified")
+        val ok = status == "verified" || status.startsWith("verified_")
+        SideResult(who, if (ok) verifiedText(status) else sideFailureText(status), ok)
     }
 }
 
+/** "verified_gyro" -> "verified via gyroscope" (which of the three checks passed first). */
+private fun verifiedText(status: String): String = when (status) {
+    "verified_gyro" -> "verified via gyroscope"
+    "verified_accelerometer" -> "verified via accelerometer"
+    "verified_illumination" -> "verified via illumination (face flash)"
+    else -> "verified"
+}
+
 private fun sideFailureText(reason: String): String = when (reason) {
+    "no_evidence" -> "not verified: no gyroscope, accelerometer or face response"
     "no_motion" -> "no movement detected"
     "flash_not_confirmed" -> "face not confirmed by the screen flash"
-    "reflection_detected" -> "screen / photo reflection detected"
+    "reflection_detected" -> "screen or photo detected"
     "camera_blocked" -> "camera covered or blocked"
     "no_telemetry" -> "no camera data received"
     "timeout" -> "not verified in time"

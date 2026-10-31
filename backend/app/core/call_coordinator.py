@@ -58,28 +58,25 @@ def report(call_id: str, side: str, verdict: dict) -> None:
         "reflection_count": verdict.get("reflection_count"),
         "reflection_veto": verdict.get("reflection_veto"),
         "illum_confirmed": verdict.get("illum_confirmed"),
+        "verified_via": verdict.get("verified_via"),
+        "passes": verdict.get("passes"),
         "trust_state": verdict.get("trust_state"),
     }
 
 
 def side_status(r: dict | None) -> str:
-    """One side's outcome: 'verified' or the specific reason it did not verify."""
+    """One side's outcome: 'verified_<gyro|accelerometer|illumination>' (which check passed
+    first) or the reason none of them did."""
     if r is None:
         return "no_telemetry"                      # never sent liveness data (app closed / no network)
     if r.get("trust_state") == "TRUSTED":
-        return "verified"
+        via = r.get("verified_via")
+        return f"verified_{via}" if via else "verified"
     if r.get("camera_blocked"):
         return "camera_blocked"                    # lens covered or black feed
     if r.get("reflection_count"):
-        return "reflection_detected"               # screen / glossy-photo style flash response
-    if r.get("gyro_unavailable"):
-        # no gyro data from this phone: it needs visible camera movement AND a strong flash
-        return "flash_not_confirmed" if (r.get("video_motion_pass") or r.get("accel_motion_pass")) else "no_motion"
-    if not r.get("channel_a_pass"):
-        return "no_motion"                         # Channel A: gyro/camera motion not correlated
-    if not r.get("channel_b_pass"):
-        return "flash_not_confirmed"               # Channel B: no face-like response to the flash
-    return "timeout"
+        return "reflection_detected"               # a screen / photo / glare reflection
+    return "no_evidence"                           # gyro, accelerometer and flash all failed to show a live person
 
 
 def sides_summary(reports: dict[str, dict]) -> str:
@@ -158,7 +155,10 @@ def mark_verified(call_id: str, side: str) -> None:
     if state is None or state.outcome is not None:
         return
     state.verified_sides.add(side)
-    logger.info("VERIFIED call=%s side=%s after=%.1fs", call_id, side, time.monotonic() - state.started_monotonic)
+    logger.info(
+        "VERIFIED call=%s side=%s via=%s after=%.1fs", call_id, side,
+        (state.reports.get(side) or {}).get("verified_via"), time.monotonic() - state.started_monotonic,
+    )
     if len(state.verified_sides) == len(_SIDES):
         state.outcome = "verified"
         state.on_settled.set()
