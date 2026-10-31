@@ -15,7 +15,14 @@ MAX_LAG_S = 0.35
 # (a phone lying still in front of a replay) passes ~6-21% -- this is the accepted cost of that
 # sensitivity (0.008/0.20: 0-4%; shortening to 2 windows measured 12-74%, for only 0.5 s
 # gain). tests/test_motion_sensitivity.py pins both sides.
-MOTION_GATE = 0.004  # rad/s RMS
+# Latest round (simulated, tests/test_motion_sensitivity.py pins it): gate 0.004 -> 0.003, so a
+# 0.003 rad/s tremor now counts (verifies in ~4.5 s; >= 0.005 rad/s in 3.0 s, the floor set by
+# the 2 s analysis window + 3 dwell windows). Unrelated amplitude-matched noise passes ~13-21%
+# (unchanged); a phone lying still (gyro noise <= 0.002 rad/s) passes 0%, 5% at 0.003.
+# Rejected on measurement: 2 dwell windows at trust 0.15 (unrelated passes 33-37%), and any gate
+# below ~0.0025 (a still phone then passes ~75%). Trust stays at 0.15 because real phones score
+# low on this channel (logged S_A ~0.02-0.13).
+MOTION_GATE = 0.003  # rad/s RMS
 FRAME_W, FRAME_H = 160, 120
 TELEMETRY_FPS = 15
 CHUNK_MS = 500

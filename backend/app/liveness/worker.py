@@ -43,7 +43,7 @@ ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust 
 # A challenge that responds like a mirrored screen (clipping / hot spot / compact patch --
 # illumination.py) blocks trust for this long. A merely weak or inconclusive response does not. A challenge that correlates but fails the spatial test
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
-ILLUM_CONFIRM_MIN = 0.5
+ILLUM_CONFIRM_MIN = 0.4  # was 0.5: a weaker (but face-like, un-vetoed) flash response now counts
 BLOCKED_FRAMES = 8        # recent frames inspected for a covered / black camera
 BLOCKED_MEAN_MAX = 8.0    # 0-255: darker than this is no scene
 BLOCKED_STD_MAX = 6.0     # 0-255: flatter than this is no scene (lens under a finger)

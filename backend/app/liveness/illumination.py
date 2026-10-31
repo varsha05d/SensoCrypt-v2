@@ -31,9 +31,9 @@ GRID_ROWS, GRID_COLS = 6, 8
 FRAME_W, FRAME_H = 160, 120
 
 MIN_FRAMES = 6
-OBS_STD_FLOOR = 3.0          # 0-255 brightness units; below this the flash left no trace
-GLOBAL_R_MIN = 0.5           # global correlation needed to count as a real response at all
-CELL_CORR_MIN = 0.5          # a cell "responds" if it correlates with the flash this well
+OBS_STD_FLOOR = 2.0          # 0-255 brightness units; below this the flash left no trace
+GLOBAL_R_MIN = 0.4           # global correlation needed to count as a real response at all
+CELL_CORR_MIN = 0.4          # a cell "responds" if it correlates with the flash this well
 CELL_GAIN_REL_MIN = 0.25     # ...and its gain is at least this fraction of the strongest cell's
 
 # HARD reflection signatures -- physically unambiguous, so they veto outright:

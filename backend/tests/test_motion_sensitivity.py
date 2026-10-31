@@ -34,7 +34,7 @@ def _reaches_trusted(vis, dev):
 def test_the_slightest_shaking_verifies():
     rng = np.random.default_rng(11)
     # rad/s RMS (+ camera-estimate noise): barely perceptible hand tremor up to gentle movement
-    for energy, vis_noise in ((0.005, 0.0025), (0.008, 0.004), (0.015, 0.008), (0.03, 0.02), (0.05, 0.02)):
+    for energy, vis_noise in ((0.003, 0.0015), (0.005, 0.0025), (0.008, 0.004), (0.015, 0.008), (0.03, 0.02), (0.05, 0.02)):
         hits = 0
         for _ in range(40):
             dev = _bp_noise(rng, energy)
