@@ -51,3 +51,14 @@ DWELL_TRUST, DWELL_DEGRADE, DWELL_SUSPECT = 3, 8, 12  # consecutive windows
 # portrait): mean per-axis r=0.62 on the lag-aligned signal. Re-run the search if the
 # camera facing, orientation, or device changes -- this is device/orientation-specific.
 AXIS_MAP_FRONT = ((1, -1), (0, 1), (2, -1))  # (device_axis, sign) per camera axis
+
+# Trust needs BOTH channels (gyro/camera egomotion AND a confirmed flash response) -- the
+# product definition ("both channels pass, bilateral verification confirmed"). One channel
+# alone cannot be fooled-around: a photo moved by hand passes the gyro channel, a lit
+# replay screen can pass the flash channel. Set LIVENESS_STRICT=0 in the environment to fall
+# back to either-channel trust (the earlier behaviour) without a redeploy of code.
+import os
+
+STRICT_BOTH_CHANNELS = os.environ.get("LIVENESS_STRICT", "1") != "0"
+CHANNEL_A_RECENT_WINDOWS = 4   # judge the gyro channel over this many recent scored windows...
+CHANNEL_A_MIN_PASSES = 2       # ...it must have passed in at least this many of them

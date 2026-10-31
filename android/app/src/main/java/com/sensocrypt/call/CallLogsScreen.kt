@@ -161,6 +161,14 @@ private fun CallLogRow(entry: CallLogEntry) {
                 Spacer(Modifier.width(8.dp))
                 Text(formatTimestamp(entry.created_at), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             }
+            if (status == VerifyStatus.NOT_VERIFIED && entry.failure_reason != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Failure: ${failureText(entry.failure_reason)}",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                )
+            }
         }
     }
 }
@@ -198,6 +206,21 @@ private fun VerifyBadge(status: VerifyStatus, callState: String) {
         Spacer(Modifier.width(5.dp))
         Text(label, color = fg, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
     }
+}
+
+/** "<reason>:<side>" from the backend, e.g. "no_motion:callee" -> readable text. */
+private fun failureText(raw: String): String {
+    val (reason, side) = raw.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+    val what = when (reason) {
+        "timeout" -> "verification timed out (30 s)"
+        "no_motion" -> "no matching phone movement"
+        "flash_not_confirmed" -> "face not confirmed by screen flash"
+        "reflection_detected" -> "screen / photo reflection detected"
+        "camera_blocked" -> "camera covered or blocked"
+        "no_telemetry" -> "no camera data received"
+        else -> reason
+    }
+    return if (side.isBlank() || side == "unknown") what else "$what ($side)"
 }
 
 private fun pendingIcon(state: String) = when (state) {

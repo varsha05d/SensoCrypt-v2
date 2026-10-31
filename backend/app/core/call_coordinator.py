@@ -25,6 +25,7 @@ class _CallVerification:
         self.outcome: str | None = None  # None (pending) | "verified" | "failed"
         self.on_settled = asyncio.Event()  # set once outcome is no longer None
         self.session_key: bytes | None = None  # lazily generated, see get_or_create_session_key
+        self.reports: dict[str, dict] = {}  # side -> latest liveness snapshot (see report())
 
 
 _calls: dict[str, _CallVerification] = {}
@@ -39,7 +40,45 @@ def start_window(call_id: str) -> None:
         asyncio.create_task(_enforce_timeout(call_id))
 
 
-async def _set_call_state_in_db(call_id: str, state: str) -> None:
+def report(call_id: str, side: str, verdict: dict) -> None:
+    """Keeps each side's latest liveness snapshot, so a failed call can say WHY it failed."""
+    state = _calls.get(call_id)
+    if state is None or side not in _SIDES:
+        return
+    state.reports[side] = {
+        "motion": verdict.get("verdict"),
+        "S_A": verdict.get("S_A"),
+        "channel_a_pass": verdict.get("channel_a_pass"),
+        "channel_b_pass": verdict.get("channel_b_pass"),
+        "camera_blocked": verdict.get("camera_blocked"),
+        "reflection_count": verdict.get("reflection_count"),
+        "reflection_veto": verdict.get("reflection_veto"),
+        "illum_confirmed": verdict.get("illum_confirmed"),
+        "trust_state": verdict.get("trust_state"),
+    }
+
+
+def classify_failure(reports: dict[str, dict]) -> tuple[str, str]:
+    """(reason, side) for the first side that did not verify, most specific cause first."""
+    for side in _SIDES:
+        r = reports.get(side)
+        if r is None:
+            return "no_telemetry", side            # never sent liveness data (app closed / no network)
+        if r.get("trust_state") == "TRUSTED":
+            continue
+        if r.get("camera_blocked"):
+            return "camera_blocked", side          # lens covered or black feed
+        if r.get("reflection_count"):
+            return "reflection_detected", side     # screen / glossy-photo style flash response
+        if not r.get("channel_a_pass"):
+            return "no_motion", side               # Channel A: gyro/camera motion not correlated
+        if not r.get("channel_b_pass"):
+            return "flash_not_confirmed", side     # Channel B: no face-like response to the flash
+        return "timeout", side
+    return "timeout", "unknown"
+
+
+async def _set_call_state_in_db(call_id: str, state: str, failure_reason: str | None = None) -> None:
     """Updates the Call row directly, independent of whether either client ever connects
     to /ws/signal/{call_id} -- a call that fails verification is never supposed to reach
     signaling at all (that's the whole point of the gate), so signal.py's own
@@ -55,6 +94,8 @@ async def _set_call_state_in_db(call_id: str, state: str) -> None:
             if call is None:
                 return
             call.state = state
+            if failure_reason is not None:
+                call.failure_reason = failure_reason
             await db.commit()
     except Exception:  # noqa: BLE001 -- call_id may not be a real Call row in ad-hoc testing
         logger.exception("failed to update Call %s to state %s", call_id, state)
@@ -68,7 +109,12 @@ async def _enforce_timeout(call_id: str) -> None:
     if state.outcome is None:
         state.outcome = "failed"
         state.on_settled.set()
-        await _set_call_state_in_db(call_id, "FAILED_VERIFICATION")
+        reason, side = classify_failure(state.reports)
+        logger.warning(
+            "VERIFICATION_RESULT call=%s outcome=failed reason=%s side=%s window_s=%s sides=%s",
+            call_id, reason, side, VERIFY_WINDOW_S, state.reports,
+        )
+        await _set_call_state_in_db(call_id, "FAILED_VERIFICATION", failure_reason=f"{reason}:{side}")
 
 
 def mark_verified(call_id: str, side: str) -> None:
@@ -84,6 +130,10 @@ def mark_verified(call_id: str, side: str) -> None:
     if len(state.verified_sides) == len(_SIDES):
         state.outcome = "verified"
         state.on_settled.set()
+        logger.info(
+            "VERIFICATION_RESULT call=%s outcome=verified both_channels=%s sides=%s",
+            call_id, all(r.get("channel_a_pass") and r.get("channel_b_pass") for r in state.reports.values()), state.reports,
+        )
         asyncio.create_task(_set_call_state_in_db(call_id, "VERIFIED"))
 
 

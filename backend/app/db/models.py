@@ -59,6 +59,8 @@ class Session(Base):
     last_seq: Mapped[int] = mapped_column(default=0)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Why verification failed, "<reason>:<side>" (e.g. no_motion:callee); null otherwise.
+    failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     end_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
 

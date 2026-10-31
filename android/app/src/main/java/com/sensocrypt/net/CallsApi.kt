@@ -27,6 +27,7 @@ data class CallLogEntry(
     val direction: String,
     val state: String,
     val created_at: String,
+    val failure_reason: String? = null,
 )
 
 class CallsApiException(val httpCode: Int, val body: String) : Exception("HTTP $httpCode: $body")

@@ -95,7 +95,7 @@ async def telemetry_ws(ws: WebSocket, session_id: str):
             illum = verdict.get("S_illum") or {}
             logger.info(
                 "seq=%s verdict=%s r=%s S_A=%s energy=%s illum_verdict=%s S_illum=%s illum_n=%s "
-                "p_trust=%s state=%s axis_locked=%s",
+                "p_trust=%s state=%s axis_locked=%s channel_A=%s channel_B=%s camera_blocked=%s side=%s",
                 seq,
                 verdict.get("verdict"),
                 verdict.get("r"),
@@ -107,7 +107,13 @@ async def telemetry_ws(ws: WebSocket, session_id: str):
                 verdict.get("p_trust"),
                 verdict.get("trust_state"),
                 verdict.get("axis_map_locked"),
+                verdict.get("channel_a_pass"),
+                verdict.get("channel_b_pass"),
+                verdict.get("camera_blocked"),
+                side,
             )
+            if call_id and side:
+                call_coordinator.report(call_id, side, verdict)
             if (
                 call_id
                 and side

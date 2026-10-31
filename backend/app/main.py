@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy import text
 
 from app.api.auth import router as auth_router
 from app.api.auth_phone import router as auth_phone_router
@@ -22,6 +23,8 @@ async def lifespan(app: FastAPI):
     # approach; revisit with Alembic once the schema needs to evolve without dropping data.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all never alters an existing table; add columns introduced after first deploy.
+        await conn.execute(text("ALTER TABLE calls ADD COLUMN IF NOT EXISTS failure_reason VARCHAR"))
     yield
 
 

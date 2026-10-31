@@ -4,6 +4,8 @@ never send an SMS ourselves), then hands us the resulting Firebase ID token. We 
 token server-side and either create or look up a User for the verified phone number.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +17,12 @@ from app.db.models import User
 from app.db.session import get_db
 from app.schemas import PhoneAuthResponse, PhoneLoginRequest, PhoneSignupRequest
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/auth/phone", tags=["auth-phone"])
+
+
+def _mask(phone: str) -> str:
+    return "*" * max(0, len(phone) - 4) + phone[-4:]
 
 
 @router.post("/signup", response_model=PhoneAuthResponse)
@@ -23,6 +30,7 @@ async def phone_signup(body: PhoneSignupRequest, db: AsyncSession = Depends(get_
     try:
         phone_number = verify_phone_id_token(body.firebase_id_token)
     except PhoneAuthError as exc:
+        logger.warning("AUTH_RESULT action=signup outcome=rejected reason=%s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     existing = await db.scalar(select(User).where(User.phone_number == phone_number))
@@ -33,6 +41,7 @@ async def phone_signup(body: PhoneSignupRequest, db: AsyncSession = Depends(get_
     db.add(user)
     await db.commit()
 
+    logger.info("AUTH_RESULT action=signup outcome=success phone=%s", _mask(phone_number))
     token = crypto.issue_user_token(str(user.user_id), ttl_s=settings.user_session_token_ttl_s)
     return PhoneAuthResponse(user_id=str(user.user_id), token=token, expires_in=settings.user_session_token_ttl_s)
 
@@ -42,11 +51,13 @@ async def phone_login(body: PhoneLoginRequest, db: AsyncSession = Depends(get_db
     try:
         phone_number = verify_phone_id_token(body.firebase_id_token)
     except PhoneAuthError as exc:
+        logger.warning("AUTH_RESULT action=login outcome=rejected reason=%s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     user = await db.scalar(select(User).where(User.phone_number == phone_number))
     if user is None:
         raise HTTPException(status_code=404, detail="no account for this phone number -- sign up first")
 
+    logger.info("AUTH_RESULT action=login outcome=success phone=%s", _mask(phone_number))
     token = crypto.issue_user_token(str(user.user_id), ttl_s=settings.user_session_token_ttl_s)
     return PhoneAuthResponse(user_id=str(user.user_id), token=token, expires_in=settings.user_session_token_ttl_s)

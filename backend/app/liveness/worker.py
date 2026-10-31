@@ -21,7 +21,11 @@ from app.liveness.constants import (
     BAND_LO_HZ,
     FS_HZ,
     MOTION_GATE,
+    CHANNEL_A_MIN_PASSES,
+    CHANNEL_A_RECENT_WINDOWS,
     NO_EVIDENCE_TIMEOUT_S,
+    P_TRUST,
+    STRICT_BOTH_CHANNELS,
     WINDOW_S,
 )
 
@@ -47,7 +51,9 @@ REFLECTION_VETO_S = 20.0
 
 
 class LivenessEngine:
-    def __init__(self, quick: bool = False):
+    def __init__(self, quick: bool = False, strict: bool | None = None):
+        self.strict = STRICT_BOTH_CHANNELS if strict is None else strict
+        self._a_recent: deque[bool] = deque(maxlen=CHANNEL_A_RECENT_WINDOWS)
         self.frames: deque[tuple[int, np.ndarray]] = deque()
         self.color_frames: deque[tuple[int, np.ndarray]] = deque()  # BGR, same timestamps
         self.gyro: deque[tuple[int, float, float, float]] = deque()
@@ -72,6 +78,7 @@ class LivenessEngine:
 
         self.trust_fsm = fusion.TrustFSM()
         self.illum_confirmed = False
+        self.illum_confirmed_ns: int | None = None  # when the last passing flash was scored
         # Informational (logged): a challenge produced a usable verdict (ok/reflection).
         self.illum_testable = False
         self.reflection_until_ns: int | None = None
@@ -289,11 +296,13 @@ class LivenessEngine:
             # compact/clipped hot spot: a glossy screen mirroring our flash. Revoke any
             # earlier confirmation and block trust until a clean challenge passes.
             self.illum_confirmed = False
+            self.illum_confirmed_ns = None
             self.reflection_count += 1
             self.reflection_until_ns = latest_ts + int(REFLECTION_VETO_S * 1e9)
             self.trust_fsm.veto()
         elif result.get("verdict") == "ok" and result.get("diffuse_ok") and result.get("S_illum", 0.0) >= ILLUM_CONFIRM_MIN:
             self.illum_confirmed = True
+            self.illum_confirmed_ns = latest_ts
 
     def ingest(self, chunk: dict) -> dict:
         for f in chunk.get("frames", []):
@@ -353,6 +362,22 @@ class LivenessEngine:
         result["camera_blocked"] = blocked
         vetoed = (self.reflection_until_ns is not None and latest_ts < self.reflection_until_ns) or blocked
         allow_trust = self._allow_trust(latest_ts) and not blocked
+        if result.get("verdict") in ("ok", "no_evidence"):
+            self._a_recent.append(s_a is not None and s_a >= P_TRUST)
+        channel_a_pass = sum(self._a_recent) >= CHANNEL_A_MIN_PASSES
+        # A passing flash stays valid for ILLUM_SCORE_STALE_S (one later weak reading, e.g. a
+        # challenge the auto-exposure fought, must not undo it); a reflection revokes it.
+        channel_b_pass = (
+            not vetoed
+            and self.illum_confirmed
+            and self.illum_confirmed_ns is not None
+            and (latest_ts - self.illum_confirmed_ns) <= int(ILLUM_SCORE_STALE_S * 1e9)
+        )
+        result["channel_a_pass"] = channel_a_pass
+        result["channel_b_pass"] = channel_b_pass
+        result["strict"] = self.strict
+        if self.strict and not (channel_a_pass and channel_b_pass):
+            allow_trust = False
         result["illum_confirmed"] = self.illum_confirmed
         result["illum_testable"] = self.illum_testable
         result["reflection_veto"] = vetoed

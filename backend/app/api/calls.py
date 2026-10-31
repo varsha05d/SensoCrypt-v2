@@ -218,6 +218,7 @@ async def call_logs(
                 direction="outgoing" if is_outgoing else "incoming",
                 state=call.state,
                 created_at=call.created_at.isoformat(),
+                failure_reason=call.failure_reason,
             )
         )
     return entries

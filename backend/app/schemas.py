@@ -91,6 +91,7 @@ class CallLogEntry(BaseModel):
     direction: str  # "outgoing" | "incoming"
     state: str
     created_at: str
+    failure_reason: str | None = None
 
 
 class SessionKeyRequest(BaseModel):

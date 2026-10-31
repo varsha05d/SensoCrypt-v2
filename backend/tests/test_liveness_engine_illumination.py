@@ -16,6 +16,12 @@ H, W, FPS = 120, 160, 15
 STEP_NS = int(1e9 / FPS)
 
 
+# A real room has structure; a perfectly uniform backdrop would look like a covered lens.
+TEXTURE = 70.0 + np.repeat(
+    cv2.GaussianBlur(np.random.default_rng(99).normal(0, 1, (H, W)).astype(np.float32), (0, 0), 3)[:, :, None] * 150.0, 3, axis=2
+)
+
+
 def _face(flash, base):
     yy, xx = np.mgrid[0:H, 0:W]
     blob = np.exp(-(((yy - 60) / 38.0) ** 2 + ((xx - 80) / 45.0) ** 2))
@@ -32,12 +38,17 @@ def _flat(flash, base):
     return base
 
 
-def _run(response, gray_only=False, seconds=30, seed=0):
+def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=None):  # noqa: C901
+    """strict=False: either-channel trust (these tests exercise the flash channel alone).
+    motion: optional dict returned in place of the gyro-vs-camera score, i.e. a fake Channel A."""
     rng = np.random.default_rng(seed)
-    engine = LivenessEngine(quick=True)
+    engine = LivenessEngine(quick=True, strict=strict)
+    if motion is not None:
+        engine._score_motion = lambda: dict(motion)
     engine.seen_color = set()  # every frame timestamp that was ever decoded in colour
     challenges = []
-    states, last = [], {}
+    states, last, passes = [], {}, []
+    engine.passes = passes
     t = 10_000_000_000
     t_end = t + int(seconds * 1e9)
     frames_per_chunk = 5
@@ -49,7 +60,7 @@ def _run(response, gray_only=False, seconds=30, seed=0):
                 e = il._expected_rgb_at(c, t - c["start_at_ns"])
                 if e is not None:
                     flash = e
-            base = np.full((H, W, 3), 70.0) + rng.normal(0, 1.0, (H, W, 3))
+            base = TEXTURE + rng.normal(0, 1.0, (H, W, 3))
             rgb = np.clip(response(flash, base), 0, 255).astype(np.uint8)
             bgr = rgb[:, :, ::-1]
             if gray_only:
@@ -65,6 +76,7 @@ def _run(response, gray_only=False, seconds=30, seed=0):
         engine.seen_color.update(t_ for t_, _ in engine.color_frames)
         json.dumps(result)  # the verdict goes to the phone as JSON: no numpy types allowed
         states.append(result.get("trust_state"))
+        passes.append((result.get("channel_a_pass"), result.get("channel_b_pass")))
         last = result
     return engine, states, last, challenges
 
@@ -178,3 +190,50 @@ def test_weak_flash_response_alone_is_not_trusted():
         ok, jpg = cv2.imencode(".jpg", frame)
         res = e.ingest({"frames": [{"t_ns": 1_000_000_000 + i * STEP_NS, "jpeg_bytes": jpg.tobytes()}], "imu": {"gyro": []}})
     assert res.get("trust_state") != "TRUSTED", res
+
+
+# --- the test-case matrix (TC04-TC06) at engine level -------------------------------------
+
+MOVING = {"verdict": "ok", "S_A": 0.45, "r": 0.7, "energy": 0.02}
+STILL = {"verdict": "no_evidence", "reason": "insufficient optical flow"}
+
+
+def _flat_neutral_screen(flash, base):
+    out = base.copy()
+    out[12:108, 16:144, :] += flash[None, None, :] * 0.25  # even, colour-neutral: a lit screen
+    return out
+
+
+def test_tc05_still_phone_with_a_live_face_is_not_trusted():
+    # Channel A has nothing (phone held completely still) -> strict trust is withheld even
+    # though the flash channel alone is satisfied by a real face.
+    engine, states, last, _ = _run(_face, strict=True, motion=STILL)
+    assert engine.illum_confirmed, "flash channel should pass for a live face"
+    assert not any(a for a, _ in engine.passes) and any(b for _, b in engine.passes)
+    assert "TRUSTED" not in states, states
+
+
+def test_tc06_both_channels_passing_is_trusted():
+    engine, states, last, _ = _run(_face, strict=True, motion=MOVING)
+    assert any(a and b for a, b in engine.passes), engine.passes[-5:]
+    assert "TRUSTED" in states, states
+
+
+def test_tc04_photo_on_a_screen_moved_by_hand_is_not_trusted():
+    # Moving phone satisfies Channel A (a photo shifts in frame like a face would), so the
+    # flash channel is what has to stop it: a flat, colour-neutral response is a screen.
+    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=MOVING)
+    assert any(a for a, _ in engine.passes)
+    assert not any(b for _, b in engine.passes)
+    assert "TRUSTED" not in states, states
+
+
+def test_tc04_photo_with_a_still_phone_fails_both_channels():
+    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=STILL)
+    assert not any(a for a, _ in engine.passes) and not any(b for _, b in engine.passes)
+    assert "TRUSTED" not in states, states
+
+
+def test_either_channel_mode_still_available():
+    engine, states, last, _ = _run(_face, strict=False, motion=STILL)
+    assert "TRUSTED" in states, states

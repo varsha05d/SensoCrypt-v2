@@ -82,9 +82,14 @@ def _cell_means(frame_bgr: np.ndarray) -> np.ndarray:
 
 
 def _is_gray_replicated(frames: list[np.ndarray]) -> bool:
-    """Old clients send luma copied into R=G=B -- no usable chroma."""
-    f = frames[len(frames) // 2].astype(int)
-    return float(np.abs(f[:, :, 0] - f[:, :, 1]).mean() + np.abs(f[:, :, 1] - f[:, :, 2]).mean()) < 0.5
+    """Old clients send luma copied into R=G=B -- no usable chroma. Colour anywhere in the
+    capture is enough to count it as colour: judging a single frame is wrong, because a
+    neutral scene during a black flash state looks grey even on a colour camera."""
+    peak = 0.0
+    for f in frames:
+        f = f.astype(int)
+        peak = max(peak, float(np.abs(f[:, :, 0] - f[:, :, 1]).mean() + np.abs(f[:, :, 1] - f[:, :, 2]).mean()))
+    return peak < 0.5
 
 
 def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:

@@ -208,7 +208,15 @@ private fun VerifyScreenContent(
                     reachedTrusted = true
                     statusText = "Verified — waiting for the other person…"
                 }
-                if (!reachedTrusted) statusText = "Verifying it's really you…"
+                if (!reachedTrusted) {
+                    // Backend flags a phone that has shown no usable movement for a while, and
+                    // a blocked camera; say what to do instead of silently timing out.
+                    statusText = when {
+                        json?.optBoolean("camera_blocked", false) == true -> "Camera is covered — uncover it and face the screen"
+                        json?.optBoolean("motion_prompt", false) == true -> "Hold the phone naturally or move it slightly…"
+                        else -> "Verifying it's really you…"
+                    }
+                }
 
                 if (reachedTrusted) {
                     val keyResp = try { callsApi.getSessionKey(callId, sessionId, side) } catch (e: Exception) { null }

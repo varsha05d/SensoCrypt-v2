@@ -78,3 +78,67 @@ async def test_clear_removes_all_state():
     call_coordinator.mark_verified("call-f", "caller")
     call_coordinator.clear("call-f")
     assert "call-f" not in call_coordinator._calls
+
+
+# --- failure classification (TC07 / TC09): a failed call records WHY it failed ---
+
+from app.core.call_coordinator import classify_failure  # noqa: E402
+
+_OK = {"trust_state": "TRUSTED"}
+
+
+def test_failure_no_telemetry_from_a_side():
+    assert classify_failure({"caller": _OK}) == ("no_telemetry", "callee")
+
+
+def test_failure_camera_blocked_wins():
+    r = {"trust_state": "DEGRADED", "camera_blocked": True, "reflection_count": 2}
+    assert classify_failure({"caller": _OK, "callee": r}) == ("camera_blocked", "callee")
+
+
+def test_failure_reflection():
+    r = {"trust_state": "SUSPECT", "reflection_count": 1}
+    assert classify_failure({"caller": r, "callee": _OK}) == ("reflection_detected", "caller")
+
+
+def test_failure_no_motion_when_channel_a_fails():
+    r = {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": True}
+    assert classify_failure({"caller": _OK, "callee": r}) == ("no_motion", "callee")
+
+
+def test_failure_flash_not_confirmed_when_channel_b_fails():
+    r = {"trust_state": "DEGRADED", "channel_a_pass": True, "channel_b_pass": False}
+    assert classify_failure({"caller": r, "callee": _OK}) == ("flash_not_confirmed", "caller")
+
+
+def test_failure_plain_timeout_when_both_channels_passed_late():
+    r = {"trust_state": "DEGRADED", "channel_a_pass": True, "channel_b_pass": True}
+    assert classify_failure({"caller": _OK, "callee": r}) == ("timeout", "callee")
+
+
+# --- TC07: a call not verified within the window is blocked and the failure is recorded ---
+
+import asyncio  # noqa: E402
+
+import pytest  # noqa: E402
+
+from app.core import call_coordinator as cc  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_tc07_unverified_call_times_out_blocked_with_reason(monkeypatch):
+    saved = {}
+
+    async def fake_db(call_id, state, failure_reason=None):
+        saved.update(call_id=call_id, state=state, failure_reason=failure_reason)
+
+    monkeypatch.setattr(cc, "VERIFY_WINDOW_S", 0.05)
+    monkeypatch.setattr(cc, "_set_call_state_in_db", fake_db)
+    cc.start_window("tc07")
+    cc._calls["tc07"].deadline_monotonic = cc.time.monotonic() + 0.05
+    cc.report("tc07", "caller", {"trust_state": "TRUSTED"})
+    cc.report("tc07", "callee", {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": True})
+    assert await asyncio.wait_for(cc.wait_for_outcome("tc07"), 2) == "failed"
+    assert not cc.is_verified("tc07")
+    assert saved["state"] == "FAILED_VERIFICATION" and saved["failure_reason"] == "no_motion:callee"
+    cc.clear("tc07")

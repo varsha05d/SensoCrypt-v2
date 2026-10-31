@@ -1,0 +1,85 @@
+SensoCrypt v2 - test case evidence (Sat Oct 31 18:31:00 IST 2026)
+commit: 999bdb8
+
+============================= test session starts ==============================
+platform darwin -- Python 3.11.12, pytest-9.2.0, pluggy-1.7.0 -- /Users/pradyumnaprasad/Developer/SensoCrypt-v2/backend/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/pradyumnaprasad/Developer/SensoCrypt-v2/backend
+configfile: pyproject.toml
+plugins: asyncio-1.4.1, anyio-4.14.2
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 67 items / 24 deselected / 43 selected
+
+tests/test_call_coordinator.py::test_failure_no_telemetry_from_a_side PASSED [  2%]
+tests/test_call_coordinator.py::test_failure_camera_blocked_wins PASSED  [  4%]
+tests/test_call_coordinator.py::test_failure_reflection PASSED           [  6%]
+tests/test_call_coordinator.py::test_failure_no_motion_when_channel_a_fails PASSED [  9%]
+tests/test_call_coordinator.py::test_failure_flash_not_confirmed_when_channel_b_fails PASSED [ 11%]
+tests/test_call_coordinator.py::test_failure_plain_timeout_when_both_channels_passed_late PASSED [ 13%]
+tests/test_call_coordinator.py::test_tc07_unverified_call_times_out_blocked_with_reason PASSED [ 16%]
+tests/test_illumination.py::test_diffuse_face_like_response_passes PASSED [ 18%]
+tests/test_illumination.py::test_small_mirror_patch_is_never_confirmed PASSED [ 20%]
+tests/test_illumination.py::test_flat_scene_is_no_variation PASSED       [ 23%]
+tests/test_illumination.py::test_genuine_face_at_armslength_is_not_rejected PASSED [ 25%]
+tests/test_illumination.py::test_clipped_glare_patch_is_vetoed_whatever_its_size PASSED [ 27%]
+tests/test_illumination.py::test_weak_unclipped_neutral_reflection_is_never_confirmed PASSED [ 30%]
+tests/test_illumination.py::test_empty_or_tiny_input_is_handled PASSED   [ 32%]
+tests/test_illumination.py::test_frames_of_a_different_size_are_resized_not_crashed PASSED [ 34%]
+tests/test_illumination.py::test_neutral_compact_patch_is_not_confirmed_as_a_face PASSED [ 37%]
+tests/test_liveness_engine_illumination.py::test_real_face_gets_confirmed_and_trusted FAILED [ 39%]
+tests/test_liveness_engine_illumination.py::test_mirror_reflection_is_never_trusted PASSED [ 41%]
+tests/test_liveness_engine_illumination.py::test_flat_scene_is_never_trusted PASSED [ 44%]
+tests/test_liveness_engine_illumination.py::test_old_gray_only_client_still_verifies_a_real_face PASSED [ 46%]
+tests/test_liveness_engine_illumination.py::test_a_reflection_after_a_clean_pass_revokes_confirmation PASSED [ 48%]
+tests/test_liveness_engine_illumination.py::test_inconclusive_illumination_does_not_block_trust PASSED [ 51%]
+tests/test_liveness_engine_illumination.py::test_a_reflection_blocks_trust PASSED [ 53%]
+tests/test_liveness_engine_illumination.py::test_colour_is_only_decoded_around_a_challenge_window PASSED [ 55%]
+tests/test_liveness_engine_illumination.py::test_covered_camera_is_never_trusted PASSED [ 58%]
+tests/test_liveness_engine_illumination.py::test_black_feed_is_never_trusted PASSED [ 60%]
+tests/test_liveness_engine_illumination.py::test_weak_flash_response_alone_is_not_trusted PASSED [ 62%]
+tests/test_liveness_engine_illumination.py::test_tc05_still_phone_with_a_live_face_is_not_trusted PASSED [ 65%]
+tests/test_liveness_engine_illumination.py::test_tc06_both_channels_passing_is_trusted PASSED [ 67%]
+tests/test_liveness_engine_illumination.py::test_tc04_photo_on_a_screen_moved_by_hand_is_not_trusted FAILED [ 69%]
+tests/test_liveness_engine_illumination.py::test_tc04_photo_with_a_still_phone_fails_both_channels PASSED [ 72%]
+tests/test_liveness_engine_illumination.py::test_either_channel_mode_still_available PASSED [ 74%]
+tests/test_motion_sensitivity.py::test_the_slightest_shaking_verifies PASSED [ 76%]
+tests/test_motion_sensitivity.py::test_unrelated_motion_signals_mostly_do_not_verify PASSED [ 79%]
+tests/test_motion_sensitivity.py::test_a_perfectly_still_phone_gives_no_evidence PASSED [ 81%]
+tests/test_screen_cues.py::test_flat_neutral_screen_is_vetoed PASSED     [ 83%]
+tests/test_screen_cues.py::test_flat_but_skin_coloured_is_not_vetoed PASSED [ 86%]
+tests/test_screen_cues.py::test_uneven_neutral_face_is_not_vetoed PASSED [ 88%]
+tests/test_screen_cues.py::test_uneven_skin_face_still_confirmed PASSED  [ 90%]
+tests/test_screen_cues.py::test_flat_plane_motion_detected PASSED        [ 93%]
+tests/test_screen_cues.py::test_depth_parallax_not_flagged_flat PASSED   [ 95%]
+tests/test_screen_cues.py::test_tiny_motion_stays_silent PASSED          [ 97%]
+tests/test_screen_cues.py::test_too_few_frames_stays_silent PASSED       [100%]
+
+=================================== FAILURES ===================================
+__________________ test_real_face_gets_confirmed_and_trusted ___________________
+
+    def test_real_face_gets_confirmed_and_trusted():
+        engine, states, last, challenges = _run(_face)
+        assert challenges, "engine must issue challenges"
+        assert engine.illum_confirmed
+        assert engine.reflection_count == 0
+>       assert "TRUSTED" in states, states
+E       AssertionError: ['DEGRADED', 'DEGRADED', 'DEGRADED', 'DEGRADED', 'DEGRADED', 'DEGRADED', ...]
+E       assert 'TRUSTED' in ['DEGRADED', 'DEGRADED', 'DEGRADED', 'DEGRADED', 'DEGRADED', 'DEGRADED', ...]
+
+tests/test_liveness_engine_illumination.py:83: AssertionError
+___________ test_tc04_photo_on_a_screen_moved_by_hand_is_not_trusted ___________
+
+    def test_tc04_photo_on_a_screen_moved_by_hand_is_not_trusted():
+        # Moving phone satisfies Channel A (a photo shifts in frame like a face would), so the
+        # flash channel is what has to stop it: a flat, colour-neutral response is a screen.
+        engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=MOVING)
+        assert any(a for a, _ in engine.passes)
+>       assert not any(b for _, b in engine.passes)
+E       assert not True
+E        +  where True = any(<generator object test_tc04_photo_on_a_screen_moved_by_hand_is_not_trusted.<locals>.<genexpr> at 0x1166e8820>)
+
+tests/test_liveness_engine_illumination.py:221: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_liveness_engine_illumination.py::test_real_face_gets_confirmed_and_trusted
+FAILED tests/test_liveness_engine_illumination.py::test_tc04_photo_on_a_screen_moved_by_hand_is_not_trusted
+================= 2 failed, 41 passed, 24 deselected in 11.69s =================
