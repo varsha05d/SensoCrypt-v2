@@ -8,6 +8,7 @@ cannot reach each other (symmetric NAT / carrier NAT) and the call connects with
 import asyncio
 import logging
 import uuid
+import zlib
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -61,6 +62,13 @@ async def _mint() -> dict:
         return r.json()
 
 
+def _row_id() -> int:
+    """One stored credential per Metered account. Keyed by the app name so that switching to a
+    different Metered account (new METERED_APP_NAME / key) starts from a fresh credential instead of
+    serving the old account's login from the database."""
+    return zlib.crc32(settings.metered_app_name.encode()) % 2_000_000_000 + 1
+
+
 def _aware(dt: datetime | None) -> datetime | None:
     return dt if dt is None or dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
@@ -73,9 +81,10 @@ async def ensure_credential() -> tuple[str, str] | None:
     now = datetime.now(timezone.utc)
     async with _mint_lock:
         async with async_session() as db:
-            row = await db.get(TurnCredential, 1)
+            rid = _row_id()
+            row = await db.get(TurnCredential, rid)
             if row is None:
-                row = TurnCredential(id=1)
+                row = TurnCredential(id=rid)
                 db.add(row)
             exp, nexp = _aware(row.expires_at), _aware(row.next_expires_at)
             ncreated = _aware(row.next_created_at)

@@ -111,3 +111,29 @@ async def test_falls_back_to_stun_when_the_provider_is_unreachable(monkeypatch):
     _install(monkeypatch, store, [RuntimeError("offline")])
     res = await ice.get_ice_servers(uuid.uuid4())
     assert res["turn"] is False and res["ice_servers"] == ice.STUN_ONLY
+
+
+@pytest.mark.asyncio
+async def test_switching_metered_account_does_not_reuse_the_old_accounts_credential(monkeypatch):
+    rows = {}
+
+    class Session:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): ...
+        async def get(self, model, pk): return rows.get(pk)
+        def add(self, row): rows[row.id] = row
+        async def commit(self): ...
+
+    minted = [{"username": "old-user", "password": "old-pw"}, {"username": "new-user", "password": "new-pw"}]
+
+    async def fake_mint():
+        return minted.pop(0)
+
+    monkeypatch.setattr(ice, "async_session", lambda: Session())
+    monkeypatch.setattr(ice, "_mint", fake_mint)
+    monkeypatch.setattr(settings, "metered_api_key", "secret")
+    monkeypatch.setattr(settings, "metered_app_name", "old-account")
+    assert await ice.ensure_credential() == ("old-user", "old-pw")
+    assert await ice.ensure_credential() == ("old-user", "old-pw")       # same account: reused
+    monkeypatch.setattr(settings, "metered_app_name", "new-account")      # the user switches accounts
+    assert await ice.ensure_credential() == ("new-user", "new-pw")       # fresh login for the new account
