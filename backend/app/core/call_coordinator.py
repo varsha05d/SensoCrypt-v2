@@ -50,6 +50,7 @@ def report(call_id: str, side: str, verdict: dict) -> None:
         "S_A": verdict.get("S_A"),
         "channel_a_pass": verdict.get("channel_a_pass"),
         "channel_b_pass": verdict.get("channel_b_pass"),
+        "gyro_unavailable": verdict.get("gyro_unavailable"),
         "camera_blocked": verdict.get("camera_blocked"),
         "reflection_count": verdict.get("reflection_count"),
         "reflection_veto": verdict.get("reflection_veto"),
@@ -70,6 +71,8 @@ def classify_failure(reports: dict[str, dict]) -> tuple[str, str]:
             return "camera_blocked", side          # lens covered or black feed
         if r.get("reflection_count"):
             return "reflection_detected", side     # screen / glossy-photo style flash response
+        if r.get("gyro_unavailable"):
+            return "flash_not_confirmed", side     # no gyro data from this phone: only the flash could verify it
         if not r.get("channel_a_pass"):
             return "no_motion", side               # Channel A: gyro/camera motion not correlated
         if not r.get("channel_b_pass"):

@@ -70,7 +70,10 @@ def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=Non
             assert ok
             chunk_frames.append({"t_ns": t, "jpeg_bytes": jpg.tobytes()})
             t += STEP_NS
-        result = engine.ingest({"frames": chunk_frames, "imu": {"gyro": []}})
+        # A phone that has a gyro always streams samples (values are irrelevant when Channel A
+        # is faked via `motion`); no `motion` = the old gyro-less client.
+        gyro = [[t_ns_ + 0, 0.0, 0.0, 0.0] for t_ns_ in (cf["t_ns"] for cf in chunk_frames)] if motion is not None else []
+        result = engine.ingest({"frames": chunk_frames, "imu": {"gyro": gyro}})
         if "new_challenge" in result:
             challenges.append(result["new_challenge"])
         engine.seen_color.update(t_ for t_, _ in engine.color_frames)
@@ -237,3 +240,42 @@ def test_tc04_photo_with_a_still_phone_fails_both_channels():
 def test_either_channel_mode_still_available():
     engine, states, last, _ = _run(_face, strict=False, motion=STILL)
     assert "TRUSTED" in states, states
+
+
+# --- the two real-phone situations from the production logs -------------------------------
+
+def test_phone_without_a_gyro_verifies_on_a_confirmed_flash_alone():
+    # callee in the logs: no gyro samples at all, flash strong -> must still be able to verify
+    engine, states, last, _ = _run(_face, strict=True, motion=None)
+    assert last["gyro_unavailable"] is True
+    assert "TRUSTED" in states, states
+
+
+def test_phone_without_a_gyro_is_not_trusted_on_a_screen():
+    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=None)
+    assert "TRUSTED" not in states, states
+
+
+def _weak_flash_engine(motion):
+    """Caller in the logs: gyro channel strong, flash response weak (S_illum 0.21)."""
+    e = LivenessEngine(quick=True, strict=True)
+    e._score_motion = lambda: dict(motion)
+    t0 = 10_000_000_000
+    e.first_frame_ns = t0
+    e._apply_illumination_verdict({"verdict": "ok", "diffuse_ok": True, "S_illum": 0.21, "r": 0.6}, t0)
+    states = []
+    for i in range(30):
+        frame = TEXTURE[:, :, 0] + np.random.default_rng(i).normal(0, 1, (H, W))
+        ok, jpg = cv2.imencode(".jpg", np.clip(frame, 0, 255).astype(np.uint8))
+        t = t0 + (i + 1) * STEP_NS
+        res = e.ingest({"frames": [{"t_ns": t, "jpeg_bytes": jpg.tobytes()}], "imu": {"gyro": [[t, 0.0, 0.0, 0.0]]}})
+        states.append(res.get("trust_state"))
+    return states
+
+
+def test_moving_phone_with_a_weak_but_face_like_flash_is_trusted():
+    assert "TRUSTED" in _weak_flash_engine(MOVING)
+
+
+def test_still_phone_with_gyro_and_a_weak_flash_is_not_trusted():
+    assert "TRUSTED" not in _weak_flash_engine(STILL)

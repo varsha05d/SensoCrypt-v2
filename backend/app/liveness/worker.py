@@ -43,6 +43,9 @@ ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust 
 # A challenge that responds like a mirrored screen (clipping / hot spot / compact patch --
 # illumination.py) blocks trust for this long. A merely weak or inconclusive response does not. A challenge that correlates but fails the spatial test
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
+ILLUM_WEAK_MIN = 0.15      # a weaker flash response that is still face-like and un-vetoed (a phone whose
+                           # flash barely registers scored ~0.21 on a genuine face)
+NO_GYRO_GRACE_S = 4.0      # frames flowing this long with zero gyro samples = the phone sends no gyro
 ILLUM_CONFIRM_MIN = 0.4  # was 0.5: a weaker (but face-like, un-vetoed) flash response now counts
 BLOCKED_FRAMES = 8        # recent frames inspected for a covered / black camera
 BLOCKED_MEAN_MAX = 8.0    # 0-255: darker than this is no scene
@@ -79,6 +82,8 @@ class LivenessEngine:
         self.trust_fsm = fusion.TrustFSM()
         self.illum_confirmed = False
         self.illum_confirmed_ns: int | None = None  # when the last passing flash was scored
+        self.illum_weak_ns: int | None = None       # last face-like (>= ILLUM_WEAK_MIN) un-vetoed flash
+        self.gyro_total = 0                         # gyro samples ever received
         # Informational (logged): a challenge produced a usable verdict (ok/reflection).
         self.illum_testable = False
         self.reflection_until_ns: int | None = None
@@ -297,12 +302,16 @@ class LivenessEngine:
             # earlier confirmation and block trust until a clean challenge passes.
             self.illum_confirmed = False
             self.illum_confirmed_ns = None
+            self.illum_weak_ns = None
             self.reflection_count += 1
             self.reflection_until_ns = latest_ts + int(REFLECTION_VETO_S * 1e9)
             self.trust_fsm.veto()
-        elif result.get("verdict") == "ok" and result.get("diffuse_ok") and result.get("S_illum", 0.0) >= ILLUM_CONFIRM_MIN:
-            self.illum_confirmed = True
-            self.illum_confirmed_ns = latest_ts
+        elif result.get("verdict") == "ok" and result.get("diffuse_ok"):
+            if result.get("S_illum", 0.0) >= ILLUM_WEAK_MIN:
+                self.illum_weak_ns = latest_ts
+            if result.get("S_illum", 0.0) >= ILLUM_CONFIRM_MIN:
+                self.illum_confirmed = True
+                self.illum_confirmed_ns = latest_ts
 
     def ingest(self, chunk: dict) -> dict:
         for f in chunk.get("frames", []):
@@ -318,6 +327,7 @@ class LivenessEngine:
                     self.frames.append((f["t_ns"], arr))
         for t_ns, wx, wy, wz in chunk.get("imu", {}).get("gyro", []):
             self.gyro.append((t_ns, wx, wy, wz))
+            self.gyro_total += 1
 
         if not self.frames:
             return {"verdict": "no_data"}
@@ -367,16 +377,25 @@ class LivenessEngine:
         channel_a_pass = sum(self._a_recent) >= CHANNEL_A_MIN_PASSES
         # A passing flash stays valid for ILLUM_SCORE_STALE_S (one later weak reading, e.g. a
         # challenge the auto-exposure fought, must not undo it); a reflection revokes it.
-        channel_b_pass = (
+        stale_ns = int(ILLUM_SCORE_STALE_S * 1e9)
+        channel_b_pass = (  # face-like flash response, not vetoed as a screen / reflection
+            not vetoed and self.illum_weak_ns is not None and (latest_ts - self.illum_weak_ns) <= stale_ns
+        )
+        channel_b_strong = (
             not vetoed
             and self.illum_confirmed
             and self.illum_confirmed_ns is not None
-            and (latest_ts - self.illum_confirmed_ns) <= int(ILLUM_SCORE_STALE_S * 1e9)
+            and (latest_ts - self.illum_confirmed_ns) <= stale_ns
         )
+        # A phone that never sends gyro data cannot pass channel A at all; it may verify on a
+        # strongly confirmed flash instead. A phone that DOES send gyro data but is held still
+        # still fails channel A (and so is not trusted).
+        gyro_unavailable = self.gyro_total == 0 and (latest_ts - self.first_frame_ns) >= int(NO_GYRO_GRACE_S * 1e9)
         result["channel_a_pass"] = channel_a_pass
         result["channel_b_pass"] = channel_b_pass
+        result["gyro_unavailable"] = gyro_unavailable
         result["strict"] = self.strict
-        if self.strict and not (channel_a_pass and channel_b_pass):
+        if self.strict and not ((channel_a_pass and channel_b_pass) or (gyro_unavailable and channel_b_strong)):
             allow_trust = False
         result["illum_confirmed"] = self.illum_confirmed
         result["illum_testable"] = self.illum_testable
