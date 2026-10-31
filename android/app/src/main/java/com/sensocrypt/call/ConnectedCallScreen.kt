@@ -53,6 +53,7 @@ import android.util.Log
 import com.sensocrypt.identity.UserSession
 import com.sensocrypt.net.IceApi
 import com.sensocrypt.net.SignalSocket
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.webrtc.EglBase
@@ -68,7 +69,7 @@ private val CALL_PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.perm
  * loop here anymore; that already happened. This is purely offer/answer/ICE relay + media.
  */
 @Composable
-fun ConnectedCallScreen(callId: String, onExit: () -> Unit) {
+fun ConnectedCallScreen(callId: String, verifiedVia: String? = null, onExit: () -> Unit) {
     val context = LocalContext.current
     var hasPermissions by remember {
         mutableStateOf(CALL_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED })
@@ -101,11 +102,11 @@ fun ConnectedCallScreen(callId: String, onExit: () -> Unit) {
         return
     }
 
-    ConnectedCallScreenContent(callId = callId, onExit = onExit)
+    ConnectedCallScreenContent(callId = callId, verifiedVia = verifiedVia, onExit = onExit)
 }
 
 @Composable
-private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
+private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, onExit: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -115,6 +116,12 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
     var isMuted by remember { mutableStateOf(false) }
     // Which video is the big one -- tapping the small picture-in-picture view swaps them.
     var mainIsLocal by remember { mutableStateOf(false) }
+    // "Verified via movement / flash" notice, shown top-right for the first 5 seconds of the call.
+    var showHow by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        delay(5_000)
+        showHow = false
+    }
 
     val eglBase = remember { EglBase.create() }
     val webRtcSession = remember { WebRtcSession(context, eglBase) }
@@ -235,6 +242,21 @@ private fun ConnectedCallScreenContent(callId: String, onExit: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             VerifiedBadge()
+        }
+
+        if (showHow) {
+            Text(
+                verifiedViaMessage(verifiedVia),
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .systemBarsPadding()
+                    .padding(top = 12.dp, end = 12.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFF1B5E20).copy(alpha = 0.92f))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            )
         }
 
         Row(

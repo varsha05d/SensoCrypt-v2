@@ -83,7 +83,7 @@ private const val OVERALL_TIMEOUT_MS = 35_000L
 fun VerifyScreen(
     callId: String,
     side: String, // "caller" | "callee"
-    onVerified: (sharedCallKey: ByteArray) -> Unit,
+    onVerified: (sharedCallKey: ByteArray, verifiedVia: String?) -> Unit,
     onFailed: (reason: String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -122,7 +122,7 @@ fun VerifyScreen(
 private fun VerifyScreenContent(
     callId: String,
     side: String,
-    onVerified: (ByteArray) -> Unit,
+    onVerified: (ByteArray, String?) -> Unit,
     onFailed: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -183,6 +183,7 @@ private fun VerifyScreenContent(
             }
 
             var reachedTrusted = false
+            var verifiedVia: String? = null   // which check passed first (gyro / accelerometer / illumination)
             while (System.currentTimeMillis() < overallDeadline && !settled) {
                 delay(TELEMETRY_CHUNK_INTERVAL_MS)
                 val chunk = liveStreamer.drainChunk()
@@ -197,6 +198,7 @@ private fun VerifyScreenContent(
 
                 val json = try { JSONObject(ws.lastVerdict.value) } catch (e: Exception) { null }
                 val trustState = json?.optString("trust_state", "")
+                json?.optString("verified_via", "")?.takeIf { it.isNotEmpty() && it != "null" }?.let { verifiedVia = it }
                 Log.d("SensoCrypt", "VerifyScreen[$side]: verdict raw=${ws.lastVerdict.value}")
                 // Must match the backend's own gate exactly (app/api/telemetry.py only calls
                 // call_coordinator.mark_verified() when trust_state == "TRUSTED", not on any
@@ -225,7 +227,7 @@ private fun VerifyScreenContent(
                         val wrapped = Base64.decode(wrappedB64, Base64.NO_WRAP)
                         val sharedKey = unwrapCallSessionKey(wrapped, handshake.kChal, callId)
                         ws.close()
-                        settle { onVerified(sharedKey) }
+                        settle { onVerified(sharedKey, verifiedVia) }
                         return@LaunchedEffect
                     }
                 }

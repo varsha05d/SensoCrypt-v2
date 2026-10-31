@@ -234,16 +234,12 @@ private fun sideResults(entry: CallLogEntry): List<SideResult> {
     }
 }
 
-/** "verified_gyro" -> "verified via gyroscope" (which of the three checks passed first). */
-private fun verifiedText(status: String): String = when (status) {
-    "verified_gyro" -> "verified via gyroscope"
-    "verified_accelerometer" -> "verified via accelerometer"
-    "verified_illumination" -> "verified via illumination (face flash)"
-    else -> "verified"
-}
+/** "verified_gyro" / "verified_accelerometer" -> "verified via movement"; "verified_illumination" -> "verified via flash". */
+private fun verifiedText(status: String): String =
+    verifiedViaWord(status.removePrefix("verified_"))?.let { "verified via $it" } ?: "verified"
 
 private fun sideFailureText(reason: String): String = when (reason) {
-    "no_evidence" -> "not verified: no gyroscope, accelerometer or face response"
+    "no_evidence" -> "not verified: no movement or flash response"
     "no_motion" -> "no movement detected"
     "flash_not_confirmed" -> "face not confirmed by the screen flash"
     "reflection_detected" -> "screen or photo detected"
