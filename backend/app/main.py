@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,10 +12,20 @@ from app.api.ice import router as ice_router
 from app.api.session import router as session_router
 from app.api.signal import router as signal_router
 from app.api.telemetry import router as telemetry_router
+from app.core.config import settings
 from app.db.models import Base
 from app.db.session import engine
 
 logging.basicConfig(level=logging.INFO)
+
+
+async def _warm_turn() -> None:
+    from app.api.ice import ensure_credential
+
+    try:
+        await ensure_credential()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("TURN credential warm-up failed")
 
 
 @asynccontextmanager
@@ -25,6 +36,10 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
         # create_all never alters an existing table; add columns introduced after first deploy.
         await conn.execute(text("ALTER TABLE calls ADD COLUMN IF NOT EXISTS failure_reason VARCHAR"))
+    # Mint/renew the relay credential now, so it is already accepted by the time anyone calls
+    # (a credential created seconds before a call is not yet usable at the relay).
+    if settings.metered_app_name and settings.metered_api_key:
+        asyncio.create_task(_warm_turn())
     yield
 
 

@@ -256,7 +256,7 @@ def test_either_channel_mode_still_available():
 
 def test_phone_without_a_gyro_verifies_when_it_moves_and_the_flash_is_confirmed():
     # callee in the logs: no gyro samples at all. Visible camera movement + a strong flash verifies.
-    engine, states, last, _ = _run(_face, strict=True, motion=None, drift=0.3)
+    engine, states, last, _ = _run(_face, strict=True, motion=None, drift=0.6)
     assert last["gyro_unavailable"] is True
     assert "TRUSTED" in states, states
 
@@ -271,7 +271,7 @@ def test_phone_without_a_gyro_that_does_not_move_is_never_trusted():
 
 
 def test_phone_without_a_gyro_is_not_trusted_on_a_screen():
-    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=None, drift=0.3)
+    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=None, drift=0.6)
     assert "TRUSTED" not in states, states
 
 
@@ -319,3 +319,15 @@ def test_phone_without_gyro_is_recognised_after_a_short_grace():
         if i == 10:                                   # ~0.7 s in: too early to call it
             assert res["gyro_unavailable"] is False
     assert res["gyro_unavailable"] is True            # ~2.6 s in
+
+
+def test_real_still_phone_video_motion_readings_never_count_as_movement():
+    # video_motion values logged by production for a phone that "had no movement at all"
+    from app.liveness.worker import VIDEO_MOTION_MIN_PASSES, VIDEO_MOTION_MIN_PX, VIDEO_MOTION_RECENT
+
+    real_still = [0.073, 0.038, 0.061, 0.058, 0.133, 0.061, 0.045, 0.091, 0.038, 0.089,
+                  0.108, 0.065, 0.034, 0.038, 0.099, 0.033, 0.031, 0.055]
+    assert max(real_still) < VIDEO_MOTION_MIN_PX
+    for i in range(len(real_still) - VIDEO_MOTION_RECENT + 1):
+        window = real_still[i:i + VIDEO_MOTION_RECENT]
+        assert sum(v >= VIDEO_MOTION_MIN_PX for v in window) < VIDEO_MOTION_MIN_PASSES

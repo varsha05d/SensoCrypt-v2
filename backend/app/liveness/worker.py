@@ -45,9 +45,11 @@ ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust 
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
 ILLUM_WEAK_MIN = 0.15      # a weaker flash response that is still face-like and un-vetoed (a phone whose
                            # flash barely registers scored ~0.21 on a genuine face)
-VIDEO_MOTION_MIN_PX = 0.08  # coherent camera shift per frame pair that counts as movement (a still
-                            # camera reads <= 0.07 even with heavy noise; slight hand movement >= 0.1)
-VIDEO_MOTION_RECENT, VIDEO_MOTION_MIN_PASSES = 6, 3
+VIDEO_MOTION_MIN_PX = 0.3   # coherent camera shift per frame pair that counts as movement. Set from REAL data:
+                            # a phone sitting still read 0.03-0.13 on a real handset (sensor noise, auto-exposure,
+                            # compression), so 0.08 -- tuned on clean synthetic frames -- passed a still phone.
+                            # A phone with no gyro must therefore be visibly moved, not just held.
+VIDEO_MOTION_RECENT, VIDEO_MOTION_MIN_PASSES = 6, 4
 NO_GYRO_GRACE_S = 1.5      # frames flowing this long with zero gyro samples = the phone sends no gyro
 ILLUM_CONFIRM_MIN = 0.4  # was 0.5: a weaker (but face-like, un-vetoed) flash response now counts
 BLOCKED_FRAMES = 8        # recent frames inspected for a covered / black camera

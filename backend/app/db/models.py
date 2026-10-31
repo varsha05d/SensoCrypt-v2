@@ -9,7 +9,7 @@ pre-connect liveness verification flow before its signaling/media is ever unlock
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -77,3 +77,23 @@ class Call(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Why verification failed, "<reason>:<side>" (e.g. no_motion:callee); null otherwise.
     failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class TurnCredential(Base):
+    """The relay (TURN) login handed to phones. Stored so it SURVIVES backend restarts: a
+    credential minted seconds before a call is not yet accepted by the relay (Metered: up to
+    ~2 minutes), so a fresh one per restart made the first call after every deploy/wake-up
+    connect with no audio or video. Single row (id=1); `next_*` is a replacement minted ahead
+    of expiry that only starts being served once it has aged."""
+
+    __tablename__ = "turn_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str | None] = mapped_column(String, nullable=True)
+    password: Mapped[str | None] = mapped_column(String, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_username: Mapped[str | None] = mapped_column(String, nullable=True)
+    next_password: Mapped[str | None] = mapped_column(String, nullable=True)
+    next_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

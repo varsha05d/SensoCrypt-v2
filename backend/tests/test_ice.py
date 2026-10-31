@@ -1,9 +1,43 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.api import ice
 from app.core.config import settings
+
+NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
+
+
+class _Store:
+    """In-memory stand-in for the turn_credentials row + the DB session that serves it."""
+
+    def __init__(self):
+        self.row = None
+
+
+def _install(monkeypatch, store, mint_results):
+    class Session:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): ...
+        async def get(self, model, pk): return store.row
+        def add(self, row): store.row = row
+        async def commit(self): ...
+
+    calls = {"mint": 0}
+
+    async def fake_mint():
+        calls["mint"] += 1
+        r = mint_results.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(ice, "async_session", lambda: Session())
+    monkeypatch.setattr(ice, "_mint", fake_mint)
+    monkeypatch.setattr(settings, "metered_app_name", "demo")
+    monkeypatch.setattr(settings, "metered_api_key", "secret")
+    return calls
 
 
 @pytest.mark.asyncio
@@ -15,44 +49,65 @@ async def test_stun_only_when_turn_not_configured(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_falls_back_to_stun_when_provider_unreachable(monkeypatch):
-    monkeypatch.setattr(settings, "metered_app_name", "nonexistent-app-for-test")
-    monkeypatch.setattr(settings, "metered_api_key", "x")
-
-    class Boom:
-        def __init__(self, *a, **k): ...
-        async def __aenter__(self): raise RuntimeError("offline")
-        async def __aexit__(self, *a): ...
-
-    monkeypatch.setattr(ice.httpx, "AsyncClient", Boom)
+async def test_first_ever_credential_is_minted_and_served(monkeypatch):
+    store = _Store()
+    calls = _install(monkeypatch, store, [{"username": "u1", "password": "p1"}])
     res = await ice.get_ice_servers(uuid.uuid4())
-    assert res["turn"] is False
+    assert res["turn"] is True
+    relay = res["ice_servers"][-1]
+    assert relay["username"] == "u1" and relay["credential"] == "p1"
+    assert any(u.startswith("turn:global.relay.metered.ca") for u in relay["urls"])
+    assert calls["mint"] == 1 and store.row.username == "u1"
 
 
 @pytest.mark.asyncio
-async def test_mints_credentials_with_secret_key(monkeypatch):
-    monkeypatch.setattr(settings, "metered_app_name", "demo")
-    monkeypatch.setattr(settings, "metered_api_key", "secret")
-    seen = {}
+async def test_stored_credential_is_reused_across_restarts_without_minting(monkeypatch):
+    store = _Store()
+    calls = _install(monkeypatch, store, [{"username": "u1", "password": "p1"}])
+    await ice.ensure_credential()                       # "first boot"
+    again = await ice.ensure_credential()               # "after a restart/redeploy": row persisted in the DB
+    assert again == ("u1", "p1") and calls["mint"] == 1
 
-    class Resp:
-        def raise_for_status(self): ...
-        def json(self): return {"username": "u", "password": "p"}
 
-    class Client:
-        def __init__(self, *a, **k): ...
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): ...
-        async def post(self, url, params=None, json=None):
-            seen.update(url=url, params=params)
-            return Resp()
+@pytest.mark.asyncio
+async def test_replacement_is_minted_a_day_early_and_not_served_until_mature(monkeypatch):
+    store = _Store()
+    calls = _install(monkeypatch, store, [{"username": "u1", "password": "p1"}, {"username": "u2", "password": "p2"}])
+    await ice.ensure_credential()
+    store.row.expires_at = NOW() + timedelta(hours=10)  # inside the renewal window
+    cred = await ice.ensure_credential()
+    assert cred == ("u1", "p1"), "keep serving the proven credential"
+    assert store.row.next_username == "u2" and calls["mint"] == 2
 
-    monkeypatch.setattr(ice.httpx, "AsyncClient", Client)
+
+@pytest.mark.asyncio
+async def test_matured_replacement_is_promoted_when_current_is_nearly_gone(monkeypatch):
+    store = _Store()
+    _install(monkeypatch, store, [{"username": "u1", "password": "p1"}])
+    await ice.ensure_credential()
+    store.row.expires_at = NOW() + timedelta(seconds=100)
+    store.row.next_username, store.row.next_password = "u2", "p2"
+    store.row.next_expires_at = NOW() + timedelta(days=30)
+    store.row.next_created_at = NOW() - timedelta(minutes=10)   # long since propagated
+    assert await ice.ensure_credential() == ("u2", "p2")
+
+
+@pytest.mark.asyncio
+async def test_immature_replacement_is_not_promoted(monkeypatch):
+    store = _Store()
+    _install(monkeypatch, store, [{"username": "u1", "password": "p1"}])
+    await ice.ensure_credential()
+    store.row.expires_at = NOW() + timedelta(seconds=100)
+    store.row.next_username, store.row.next_password = "u2", "p2"
+    store.row.next_expires_at = NOW() + timedelta(days=30)
+    store.row.next_created_at = NOW() - timedelta(seconds=20)   # minted seconds ago: not yet accepted
+    cred = await ice.ensure_credential()
+    assert cred == ("u1", "p1")
+
+
+@pytest.mark.asyncio
+async def test_falls_back_to_stun_when_the_provider_is_unreachable(monkeypatch):
+    store = _Store()
+    _install(monkeypatch, store, [RuntimeError("offline")])
     res = await ice.get_ice_servers(uuid.uuid4())
-    assert res["turn"] is True
-    assert seen["url"] == "https://demo.metered.live/api/v1/turn/credential"
-    assert seen["params"] == {"secretKey": "secret"}
-    relay = res["ice_servers"][-1]
-    assert relay["username"] == "u" and relay["credential"] == "p"
-    assert any(u.startswith("turn:global.relay.metered.ca") for u in relay["urls"])
-    ice._cached.update(cred=None, expires_at=0.0)  # don't leak into other tests
+    assert res["turn"] is False and res["ice_servers"] == ice.STUN_ONLY

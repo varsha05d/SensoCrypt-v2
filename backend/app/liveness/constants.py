@@ -67,5 +67,6 @@ AXIS_MAP_FRONT = ((1, -1), (0, 1), (2, -1))  # (device_axis, sign) per camera ax
 import os
 
 STRICT_BOTH_CHANNELS = os.environ.get("LIVENESS_STRICT", "1") != "0"
-CHANNEL_A_RECENT_WINDOWS = 4   # judge the gyro channel over this many recent scored windows...
-CHANNEL_A_MIN_PASSES = 2       # ...it must have passed in at least this many of them
+CHANNEL_A_RECENT_WINDOWS = 8   # judge the gyro channel over this many recent scored windows (~4 s)...
+CHANNEL_A_MIN_PASSES = 3       # ...it must have passed in at least this many (a big shake can blur the camera
+                               # estimate for a second or two; one bad stretch must not undo real evidence)
