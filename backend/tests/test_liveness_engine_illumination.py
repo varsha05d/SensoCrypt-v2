@@ -135,7 +135,8 @@ def test_a_reflection_blocks_trust():
     e = LivenessEngine(quick=True)
     e._apply_illumination_verdict({"verdict": "reflection", "reflection": True}, 1_000_000_000)
     assert not e._allow_trust(2_000_000_000)
-    assert not e._allow_trust(1_000_000_000 + 19_000_000_000)   # still inside the 20s veto
+    assert not e._allow_trust(1_000_000_000 + 7_000_000_000)    # still inside the 8s veto
+    assert e._allow_trust(1_000_000_000 + 9_000_000_000)        # expired: a false alarm cannot eat the 30 s window
     assert not e.illum_confirmed
 
 
@@ -279,3 +280,24 @@ def test_moving_phone_with_a_weak_but_face_like_flash_is_trusted():
 
 def test_still_phone_with_gyro_and_a_weak_flash_is_not_trusted():
     assert "TRUSTED" not in _weak_flash_engine(STILL)
+
+
+def test_a_later_clean_strong_flash_clears_an_earlier_reflection_alarm():
+    e = LivenessEngine(quick=True)
+    e._apply_illumination_verdict({"verdict": "reflection", "reflection": True}, 1_000_000_000)
+    assert not e._allow_trust(2_000_000_000)
+    e._apply_illumination_verdict({"verdict": "ok", "diffuse_ok": True, "S_illum": 0.8}, 3_000_000_000)
+    assert e._allow_trust(3_500_000_000)
+
+
+def test_phone_without_gyro_is_recognised_after_a_short_grace():
+    e = LivenessEngine(quick=True, strict=True)
+    frame = TEXTURE[:, :, 0].astype(np.uint8)
+    ok, jpg = cv2.imencode(".jpg", frame)
+    t0 = 10_000_000_000
+    res = None
+    for i in range(40):
+        res = e.ingest({"frames": [{"t_ns": t0 + i * STEP_NS, "jpeg_bytes": jpg.tobytes()}], "imu": {"gyro": []}})
+        if i == 10:                                   # ~0.7 s in: too early to call it
+            assert res["gyro_unavailable"] is False
+    assert res["gyro_unavailable"] is True            # ~2.6 s in

@@ -88,9 +88,9 @@ Failure reasons: `timeout`, `no_motion`, `flash_not_confirmed`, `reflection_dete
 
 ## TC09 — Fraud event after failed verification → saved and shown in call history
 - **Do:** run TC07 (or TC04/TC05), then open **Call History** on either phone.
-- **App proof:** the entry shows the other party, time, a **Likely Fraud** badge and *"Failure: no matching phone movement (callee)"* (the specific reason).
+- **App proof:** the entry shows the other party, time, a **Likely Fraud** badge and one line per side, e.g. *"Caller (you): no movement detected"* and *"Receiver: verified"*. A verified call shows *"Caller: verified"* / *"Receiver: verified"* in green.
 - **Render proof:** the `VERIFICATION_RESULT … outcome=failed reason=… side=…` line has the timestamp, failure mode and call id.
-- **Database proof:** the call record stores `state=FAILED_VERIFICATION`, `created_at`, caller id and `failure_reason` (Neon console → table `calls`).
+- **Database proof:** the call record stores `state=FAILED_VERIFICATION`, `created_at`, caller id and `failure_reason` holding both sides, e.g. `caller=no_motion,callee=verified` (Neon console → table `calls`).
 - **Automated:** `test_failure_*` (reason classification).
 
 ---

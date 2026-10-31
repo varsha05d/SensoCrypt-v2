@@ -45,12 +45,12 @@ ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust 
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
 ILLUM_WEAK_MIN = 0.15      # a weaker flash response that is still face-like and un-vetoed (a phone whose
                            # flash barely registers scored ~0.21 on a genuine face)
-NO_GYRO_GRACE_S = 4.0      # frames flowing this long with zero gyro samples = the phone sends no gyro
+NO_GYRO_GRACE_S = 1.5      # frames flowing this long with zero gyro samples = the phone sends no gyro
 ILLUM_CONFIRM_MIN = 0.4  # was 0.5: a weaker (but face-like, un-vetoed) flash response now counts
 BLOCKED_FRAMES = 8        # recent frames inspected for a covered / black camera
 BLOCKED_MEAN_MAX = 8.0    # 0-255: darker than this is no scene
 BLOCKED_STD_MAX = 6.0     # 0-255: flatter than this is no scene (lens under a finger)
-REFLECTION_VETO_S = 20.0
+REFLECTION_VETO_S = 8.0   # was 20: with a 30 s window one false alarm must not cost two thirds of it
 
 
 class LivenessEngine:
@@ -312,6 +312,9 @@ class LivenessEngine:
             if result.get("S_illum", 0.0) >= ILLUM_CONFIRM_MIN:
                 self.illum_confirmed = True
                 self.illum_confirmed_ns = latest_ts
+                # A later clean, strong, diffuse response supersedes an earlier reflection
+                # alarm (a screen/glare reflects EVERY challenge, so it cannot produce one).
+                self.reflection_until_ns = None
 
     def ingest(self, chunk: dict) -> dict:
         for f in chunk.get("frames", []):

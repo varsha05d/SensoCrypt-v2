@@ -140,5 +140,33 @@ async def test_tc07_unverified_call_times_out_blocked_with_reason(monkeypatch):
     cc.report("tc07", "callee", {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": True})
     assert await asyncio.wait_for(cc.wait_for_outcome("tc07"), 2) == "failed"
     assert not cc.is_verified("tc07")
-    assert saved["state"] == "FAILED_VERIFICATION" and saved["failure_reason"] == "no_motion:callee"
+    assert saved["state"] == "FAILED_VERIFICATION" and saved["failure_reason"] == "caller=verified,callee=no_motion"
     cc.clear("tc07")
+
+
+# --- per-side status shown in call history ---
+
+from app.core.call_coordinator import side_status, sides_summary  # noqa: E402
+
+
+def test_summary_names_the_side_that_did_not_move():
+    reports = {
+        "caller": {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": True},
+        "callee": {"trust_state": "TRUSTED"},
+    }
+    assert sides_summary(reports) == "caller=no_motion,callee=verified"
+
+
+def test_summary_when_the_receiver_is_the_one_who_failed():
+    reports = {
+        "caller": {"trust_state": "TRUSTED"},
+        "callee": {"trust_state": "DEGRADED", "channel_a_pass": False, "channel_b_pass": False},
+    }
+    assert sides_summary(reports) == "caller=verified,callee=no_motion"
+
+
+def test_summary_both_verified_and_missing_side():
+    ok = {"trust_state": "TRUSTED"}
+    assert sides_summary({"caller": ok, "callee": ok}) == "caller=verified,callee=verified"
+    assert sides_summary({"caller": ok}) == "caller=verified,callee=no_telemetry"
+    assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True}) == "flash_not_confirmed"

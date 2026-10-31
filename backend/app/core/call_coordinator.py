@@ -20,7 +20,8 @@ _SIDES = ("caller", "callee")
 
 class _CallVerification:
     def __init__(self):
-        self.deadline_monotonic = time.monotonic() + VERIFY_WINDOW_S
+        self.started_monotonic = time.monotonic()
+        self.deadline_monotonic = self.started_monotonic + VERIFY_WINDOW_S
         self.verified_sides: set[str] = set()
         self.outcome: str | None = None  # None (pending) | "verified" | "failed"
         self.on_settled = asyncio.Event()  # set once outcome is no longer None
@@ -57,6 +58,30 @@ def report(call_id: str, side: str, verdict: dict) -> None:
         "illum_confirmed": verdict.get("illum_confirmed"),
         "trust_state": verdict.get("trust_state"),
     }
+
+
+def side_status(r: dict | None) -> str:
+    """One side's outcome: 'verified' or the specific reason it did not verify."""
+    if r is None:
+        return "no_telemetry"                      # never sent liveness data (app closed / no network)
+    if r.get("trust_state") == "TRUSTED":
+        return "verified"
+    if r.get("camera_blocked"):
+        return "camera_blocked"                    # lens covered or black feed
+    if r.get("reflection_count"):
+        return "reflection_detected"               # screen / glossy-photo style flash response
+    if r.get("gyro_unavailable"):
+        return "flash_not_confirmed"               # no gyro data from this phone: only the flash could verify it
+    if not r.get("channel_a_pass"):
+        return "no_motion"                         # Channel A: gyro/camera motion not correlated
+    if not r.get("channel_b_pass"):
+        return "flash_not_confirmed"               # Channel B: no face-like response to the flash
+    return "timeout"
+
+
+def sides_summary(reports: dict[str, dict]) -> str:
+    """Stored on the call and shown in call history: "caller=no_motion,callee=verified"."""
+    return ",".join(f"{side}={side_status(reports.get(side))}" for side in _SIDES)
 
 
 def classify_failure(reports: dict[str, dict]) -> tuple[str, str]:
@@ -117,7 +142,7 @@ async def _enforce_timeout(call_id: str) -> None:
             "VERIFICATION_RESULT call=%s outcome=failed reason=%s side=%s window_s=%s sides=%s",
             call_id, reason, side, VERIFY_WINDOW_S, state.reports,
         )
-        await _set_call_state_in_db(call_id, "FAILED_VERIFICATION", failure_reason=f"{reason}:{side}")
+        await _set_call_state_in_db(call_id, "FAILED_VERIFICATION", failure_reason=sides_summary(state.reports))
 
 
 def mark_verified(call_id: str, side: str) -> None:
@@ -130,6 +155,7 @@ def mark_verified(call_id: str, side: str) -> None:
     if state is None or state.outcome is not None:
         return
     state.verified_sides.add(side)
+    logger.info("VERIFIED call=%s side=%s after=%.1fs", call_id, side, time.monotonic() - state.started_monotonic)
     if len(state.verified_sides) == len(_SIDES):
         state.outcome = "verified"
         state.on_settled.set()
@@ -137,7 +163,7 @@ def mark_verified(call_id: str, side: str) -> None:
             "VERIFICATION_RESULT call=%s outcome=verified both_channels=%s sides=%s",
             call_id, all(r.get("channel_a_pass") and r.get("channel_b_pass") for r in state.reports.values()), state.reports,
         )
-        asyncio.create_task(_set_call_state_in_db(call_id, "VERIFIED"))
+        asyncio.create_task(_set_call_state_in_db(call_id, "VERIFIED", failure_reason=sides_summary(state.reports)))
 
 
 async def wait_for_outcome(call_id: str) -> str:

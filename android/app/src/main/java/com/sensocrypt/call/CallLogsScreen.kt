@@ -161,7 +161,17 @@ private fun CallLogRow(entry: CallLogEntry) {
                 Spacer(Modifier.width(8.dp))
                 Text(formatTimestamp(entry.created_at), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             }
-            if (status == VerifyStatus.NOT_VERIFIED && entry.failure_reason != null) {
+            val sides = sideResults(entry)
+            if (sides.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                sides.forEach { (label, text, ok) ->
+                    Text(
+                        "$label: $text",
+                        color = if (ok) androidx.compose.ui.graphics.Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp,
+                    )
+                }
+            } else if (status == VerifyStatus.NOT_VERIFIED && entry.failure_reason != null) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Failure: ${failureText(entry.failure_reason)}",
@@ -206,6 +216,31 @@ private fun VerifyBadge(status: VerifyStatus, callState: String) {
         Spacer(Modifier.width(5.dp))
         Text(label, color = fg, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
     }
+}
+
+private data class SideResult(val label: String, val text: String, val ok: Boolean)
+
+/** "caller=no_motion,callee=verified" -> one readable line per side. Empty for older entries. */
+private fun sideResults(entry: CallLogEntry): List<SideResult> {
+    val raw = entry.failure_reason ?: return emptyList()
+    if (!raw.contains("=")) return emptyList()
+    return raw.split(",").mapNotNull { part ->
+        val (side, status) = part.split("=", limit = 2).let { it[0] to it.getOrNull(1) }
+        if (status == null) return@mapNotNull null
+        val isMe = (side == "caller" && entry.direction == "outgoing") || (side == "callee" && entry.direction == "incoming")
+        val who = (if (side == "caller") "Caller" else "Receiver") + if (isMe) " (you)" else ""
+        SideResult(who, if (status == "verified") "verified" else sideFailureText(status), status == "verified")
+    }
+}
+
+private fun sideFailureText(reason: String): String = when (reason) {
+    "no_motion" -> "no movement detected"
+    "flash_not_confirmed" -> "face not confirmed by the screen flash"
+    "reflection_detected" -> "screen / photo reflection detected"
+    "camera_blocked" -> "camera covered or blocked"
+    "no_telemetry" -> "no camera data received"
+    "timeout" -> "not verified in time"
+    else -> reason
 }
 
 /** "<reason>:<side>" from the backend, e.g. "no_motion:callee" -> readable text. */
