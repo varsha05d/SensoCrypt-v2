@@ -116,7 +116,7 @@ private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, onE
     var isMuted by remember { mutableStateOf(false) }
     // Which video is the big one -- tapping the small picture-in-picture view swaps them.
     var mainIsLocal by remember { mutableStateOf(false) }
-    // "Verified via movement / flash" notice, shown top-right for the first 5 seconds of the call.
+    // "Verified via movement / flash" notice, shown under the secure-call badge for the first 5 seconds.
     var showHow by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         delay(5_000)
@@ -242,21 +242,19 @@ private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, onE
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             VerifiedBadge()
-        }
-
-        if (showHow) {
-            Text(
-                verifiedViaMessage(verifiedVia),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .systemBarsPadding()
-                    .padding(top = 12.dp, end = 12.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFF1B5E20).copy(alpha = 0.92f))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-            )
+            // "Verified via movement / flash": directly under the badge, centred, for the first 5 seconds.
+            if (showHow) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    verifiedViaMessage(verifiedVia),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF1B5E20).copy(alpha = 0.92f))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
         }
 
         Row(
