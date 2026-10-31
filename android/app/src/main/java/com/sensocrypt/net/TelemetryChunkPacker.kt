@@ -23,10 +23,14 @@ fun buildTelemetryChunkJson(chunk: TelemetryChunkData): ByteArray {
     for (g: SensorReading in chunk.gyro) {
         gyroArr.put(JSONArray().apply { put(g.timestampNs); put(g.x.toDouble()); put(g.y.toDouble()); put(g.z.toDouble()) })
     }
+    val accelArr = JSONArray()
+    for (a: SensorReading in chunk.accel) {
+        accelArr.put(JSONArray().apply { put(a.timestampNs); put(a.x.toDouble()); put(a.y.toDouble()); put(a.z.toDouble()) })
+    }
     val root = JSONObject().apply {
         put("seq", chunk.seq)
         put("frames", framesArr)
-        put("imu", JSONObject().apply { put("gyro", gyroArr) })
+        put("imu", JSONObject().apply { put("gyro", gyroArr); put("accel", accelArr) })
     }
     return root.toString().toByteArray(Charsets.UTF_8)
 }

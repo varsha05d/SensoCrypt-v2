@@ -190,7 +190,7 @@ private fun VerifyScreenContent(
                     val plaintext = buildTelemetryChunkJson(chunk)
                     val encrypted = encryptTelemetryChunk(handshake.kTel, sessionId, chunk.seq, plaintext)
                     ws.send(encrypted)
-                    Log.d("SensoCrypt", "VerifyScreen[$side]: sent chunk seq=${chunk.seq} frames=${chunk.frames.size} gyro=${chunk.gyro.size}")
+                    Log.d("SensoCrypt", "VerifyScreen[$side]: sent chunk seq=${chunk.seq} frames=${chunk.frames.size} gyro=${chunk.gyro.size} accel=${chunk.accel.size}")
                 } else {
                     Log.d("SensoCrypt", "VerifyScreen[$side]: chunk seq=${chunk.seq} had 0 frames -- camera not producing frames yet")
                 }

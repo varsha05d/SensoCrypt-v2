@@ -45,7 +45,7 @@ def _flat(flash, base):
     return base
 
 
-def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=None, drift=0.0):  # noqa: C901
+def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=None, drift=0.0, accel=None):  # noqa: C901
     """strict=False: either-channel trust (these tests exercise the flash channel alone).
     motion: optional dict returned in place of the gyro-vs-camera score, i.e. a fake Channel A."""
     rng = np.random.default_rng(seed)
@@ -62,6 +62,7 @@ def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=Non
     frames_per_chunk = 5
     while t < t_end:
         chunk_frames = []
+        chunk_start = t
         for _ in range(frames_per_chunk):
             flash = np.zeros(3)
             for c in challenges:
@@ -82,7 +83,18 @@ def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=Non
         # A phone that has a gyro always streams samples (values are irrelevant when Channel A
         # is faked via `motion`); no `motion` = the old gyro-less client.
         gyro = [[t_ns_ + 0, 0.0, 0.0, 0.0] for t_ns_ in (cf["t_ns"] for cf in chunk_frames)] if motion is not None else []
-        result = engine.ingest({"frames": chunk_frames, "imu": {"gyro": gyro}})
+        imu = {"gyro": gyro}
+        if accel is not None:   # "still": resting on a table; "moving": hand tremor -- a device with no gyro but an accelerometer
+            t_a = chunk_start
+            samples = []
+            while t_a < t:
+                sec = t_a / 1e9
+                amp = 0.12 if accel == "moving" else 0.0
+                samples.append([t_a, amp * np.sin(2 * np.pi * 3.0 * sec) + rng.normal(0, 0.01),
+                                0.6 * amp * np.sin(2 * np.pi * 3.9 * sec + 1) + rng.normal(0, 0.01), 9.81 + rng.normal(0, 0.01)])
+                t_a += int(1e9 / 50)
+            imu["accel"] = samples
+        result = engine.ingest({"frames": chunk_frames, "imu": imu})
         if "new_challenge" in result:
             challenges.append(result["new_challenge"])
         engine.seen_color.update(t_ for t_, _ in engine.color_frames)
@@ -331,3 +343,24 @@ def test_real_still_phone_video_motion_readings_never_count_as_movement():
     for i in range(len(real_still) - VIDEO_MOTION_RECENT + 1):
         window = real_still[i:i + VIDEO_MOTION_RECENT]
         assert sum(v >= VIDEO_MOTION_MIN_PX for v in window) < VIDEO_MOTION_MIN_PASSES
+
+
+# --- devices with no gyro but an accelerometer (e.g. a tablet) -----------------------------
+
+def test_tablet_with_accelerometer_verifies_on_slight_movement_without_camera_motion():
+    engine, states, last, _ = _run(_face, strict=True, motion=None, drift=0.0, accel="moving")
+    assert last["gyro_unavailable"] is True and last["accel_motion_pass"] is True
+    assert last["video_motion_pass"] is False, "movement came from the accelerometer, not the picture"
+    assert "TRUSTED" in states, states
+
+
+def test_tablet_resting_on_a_table_is_not_trusted():
+    engine, states, last, _ = _run(_face, strict=True, motion=None, drift=0.0, accel="still")
+    assert last["gyro_unavailable"] is True and last["accel_motion_pass"] is False
+    assert engine.illum_confirmed
+    assert "TRUSTED" not in states, states
+
+
+def test_tablet_that_moves_but_shows_a_screen_is_not_trusted():
+    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=None, drift=0.0, accel="moving")
+    assert "TRUSTED" not in states, states

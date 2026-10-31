@@ -14,7 +14,7 @@ from collections import deque
 import cv2
 import numpy as np
 
-from app.liveness import align, challenge as challenge_mod, egomotion, fusion, illumination, imu, parallax, score
+from app.liveness import accel as accel_mod, align, challenge as challenge_mod, egomotion, fusion, illumination, imu, parallax, score
 from app.liveness.constants import (
     AXIS_MAP_FRONT,
     BAND_HI_HZ,
@@ -50,6 +50,12 @@ VIDEO_MOTION_MIN_PX = 0.3   # coherent camera shift per frame pair that counts a
                             # compression), so 0.08 -- tuned on clean synthetic frames -- passed a still phone.
                             # A phone with no gyro must therefore be visibly moved, not just held.
 VIDEO_MOTION_RECENT, VIDEO_MOTION_MIN_PASSES = 6, 4
+# Accelerometer movement (devices with no gyro). Band-passed (gravity removed) vector rms: a
+# device resting on a table reads ~0.005-0.02 m/s^2 of sensor noise; hand tremor is >= ~0.05.
+# Unverified on real hardware -- accel_rms is logged on every verdict to tune this.
+ACCEL_MIN_RMS = 0.03
+ACCEL_RECENT, ACCEL_MIN_PASSES = 6, 4
+ACCEL_WINDOW_S = 2.0
 NO_GYRO_GRACE_S = 1.5      # frames flowing this long with zero gyro samples = the phone sends no gyro
 ILLUM_CONFIRM_MIN = 0.4  # was 0.5: a weaker (but face-like, un-vetoed) flash response now counts
 BLOCKED_FRAMES = 8        # recent frames inspected for a covered / black camera
@@ -89,6 +95,8 @@ class LivenessEngine:
         self.illum_confirmed_ns: int | None = None  # when the last passing flash was scored
         self.illum_weak_ns: int | None = None       # last face-like (>= ILLUM_WEAK_MIN) un-vetoed flash
         self.gyro_total = 0                         # gyro samples ever received
+        self.accel: deque[tuple[int, float, float, float]] = deque()
+        self._am_recent: deque[bool] = deque(maxlen=ACCEL_RECENT)  # accelerometer movement checks
         self._vm_recent: deque[bool] = deque(maxlen=VIDEO_MOTION_RECENT)  # video-only movement checks
         # Informational (logged): a challenge produced a usable verdict (ok/reflection).
         self.illum_testable = False
@@ -103,6 +111,8 @@ class LivenessEngine:
             self.color_frames.popleft()
         while self.gyro and self.gyro[0][0] < cutoff:
             self.gyro.popleft()
+        while self.accel and self.accel[0][0] < cutoff:
+            self.accel.popleft()
 
     @staticmethod
     def _center_brightness(frame: np.ndarray) -> float:
@@ -337,6 +347,8 @@ class LivenessEngine:
         for t_ns, wx, wy, wz in chunk.get("imu", {}).get("gyro", []):
             self.gyro.append((t_ns, wx, wy, wz))
             self.gyro_total += 1
+        for t_ns, ax, ay, az in chunk.get("imu", {}).get("accel", []):
+            self.accel.append((t_ns, ax, ay, az))
 
         if not self.frames:
             return {"verdict": "no_data"}
@@ -403,24 +415,32 @@ class LivenessEngine:
         # Without a gyro the only movement evidence is the video itself: the camera must visibly
         # move (measured outside the flash windows, where brightness changes would fool the
         # tracker). A still phone shows none and is not trusted, gyro or not.
-        video_motion_pass = False
+        video_motion_pass = accel_motion_pass = False
         if gyro_unavailable:
-            still_frames = [f for t, f in self.frames if not self._wants_color(t)][-(VIDEO_MOTION_RECENT):]
-            try:
-                vm = parallax.median_motion_px(still_frames)
-            except cv2.error:
-                vm = None
-            if vm is not None:
-                self._vm_recent.append(vm >= VIDEO_MOTION_MIN_PX)
-                result["video_motion_px"] = round(vm, 3)
-            video_motion_pass = sum(self._vm_recent) >= VIDEO_MOTION_MIN_PASSES
+            rms = accel_mod.movement_rms(list(self.accel)[-int(ACCEL_WINDOW_S * 50) - 10:])
+            if rms is not None:
+                self._am_recent.append(rms >= ACCEL_MIN_RMS)
+                result["accel_rms"] = round(rms, 4)
+            accel_motion_pass = sum(self._am_recent) >= ACCEL_MIN_PASSES
+            if not accel_motion_pass:   # the camera is the second opinion; skip its cost when the accelerometer already says moving
+                still_frames = [f for t, f in self.frames if not self._wants_color(t)][-(VIDEO_MOTION_RECENT):]
+                try:
+                    vm = parallax.median_motion_px(still_frames)
+                except cv2.error:
+                    vm = None
+                if vm is not None:
+                    self._vm_recent.append(vm >= VIDEO_MOTION_MIN_PX)
+                    result["video_motion_px"] = round(vm, 3)
+                video_motion_pass = sum(self._vm_recent) >= VIDEO_MOTION_MIN_PASSES
+        movement_pass = accel_motion_pass or video_motion_pass
         result["channel_a_pass"] = channel_a_pass
         result["channel_b_pass"] = channel_b_pass
         result["gyro_unavailable"] = gyro_unavailable
         result["video_motion_pass"] = video_motion_pass
+        result["accel_motion_pass"] = accel_motion_pass
         result["strict"] = self.strict
         if self.strict and not (
-            (channel_a_pass and channel_b_pass) or (gyro_unavailable and video_motion_pass and channel_b_strong)
+            (channel_a_pass and channel_b_pass) or (gyro_unavailable and movement_pass and channel_b_strong)
         ):
             allow_trust = False
         result["illum_confirmed"] = self.illum_confirmed

@@ -53,6 +53,7 @@ def report(call_id: str, side: str, verdict: dict) -> None:
         "channel_b_pass": verdict.get("channel_b_pass"),
         "gyro_unavailable": verdict.get("gyro_unavailable"),
         "video_motion_pass": verdict.get("video_motion_pass"),
+        "accel_motion_pass": verdict.get("accel_motion_pass"),
         "camera_blocked": verdict.get("camera_blocked"),
         "reflection_count": verdict.get("reflection_count"),
         "reflection_veto": verdict.get("reflection_veto"),
@@ -73,7 +74,7 @@ def side_status(r: dict | None) -> str:
         return "reflection_detected"               # screen / glossy-photo style flash response
     if r.get("gyro_unavailable"):
         # no gyro data from this phone: it needs visible camera movement AND a strong flash
-        return "flash_not_confirmed" if r.get("video_motion_pass") else "no_motion"
+        return "flash_not_confirmed" if (r.get("video_motion_pass") or r.get("accel_motion_pass")) else "no_motion"
     if not r.get("channel_a_pass"):
         return "no_motion"                         # Channel A: gyro/camera motion not correlated
     if not r.get("channel_b_pass"):
@@ -99,7 +100,7 @@ def classify_failure(reports: dict[str, dict]) -> tuple[str, str]:
         if r.get("reflection_count"):
             return "reflection_detected", side     # screen / glossy-photo style flash response
         if r.get("gyro_unavailable"):
-            return ("flash_not_confirmed" if r.get("video_motion_pass") else "no_motion"), side
+            return ("flash_not_confirmed" if (r.get("video_motion_pass") or r.get("accel_motion_pass")) else "no_motion"), side
         if not r.get("channel_a_pass"):
             return "no_motion", side               # Channel A: gyro/camera motion not correlated
         if not r.get("channel_b_pass"):
