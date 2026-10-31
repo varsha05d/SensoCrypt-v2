@@ -45,6 +45,9 @@ ILLUM_SCORE_STALE_S = 20.0  # one good/bad reading shouldn't keep swaying trust 
 # (illumination.py: a glossy screen mirroring the flash) vetoes trust for this long.
 ILLUM_WEAK_MIN = 0.15      # a weaker flash response that is still face-like and un-vetoed (a phone whose
                            # flash barely registers scored ~0.21 on a genuine face)
+VIDEO_MOTION_MIN_PX = 0.08  # coherent camera shift per frame pair that counts as movement (a still
+                            # camera reads <= 0.07 even with heavy noise; slight hand movement >= 0.1)
+VIDEO_MOTION_RECENT, VIDEO_MOTION_MIN_PASSES = 6, 3
 NO_GYRO_GRACE_S = 1.5      # frames flowing this long with zero gyro samples = the phone sends no gyro
 ILLUM_CONFIRM_MIN = 0.4  # was 0.5: a weaker (but face-like, un-vetoed) flash response now counts
 BLOCKED_FRAMES = 8        # recent frames inspected for a covered / black camera
@@ -84,6 +87,7 @@ class LivenessEngine:
         self.illum_confirmed_ns: int | None = None  # when the last passing flash was scored
         self.illum_weak_ns: int | None = None       # last face-like (>= ILLUM_WEAK_MIN) un-vetoed flash
         self.gyro_total = 0                         # gyro samples ever received
+        self._vm_recent: deque[bool] = deque(maxlen=VIDEO_MOTION_RECENT)  # video-only movement checks
         # Informational (logged): a challenge produced a usable verdict (ok/reflection).
         self.illum_testable = False
         self.reflection_until_ns: int | None = None
@@ -394,11 +398,28 @@ class LivenessEngine:
         # strongly confirmed flash instead. A phone that DOES send gyro data but is held still
         # still fails channel A (and so is not trusted).
         gyro_unavailable = self.gyro_total == 0 and (latest_ts - self.first_frame_ns) >= int(NO_GYRO_GRACE_S * 1e9)
+        # Without a gyro the only movement evidence is the video itself: the camera must visibly
+        # move (measured outside the flash windows, where brightness changes would fool the
+        # tracker). A still phone shows none and is not trusted, gyro or not.
+        video_motion_pass = False
+        if gyro_unavailable:
+            still_frames = [f for t, f in self.frames if not self._wants_color(t)][-(VIDEO_MOTION_RECENT):]
+            try:
+                vm = parallax.median_motion_px(still_frames)
+            except cv2.error:
+                vm = None
+            if vm is not None:
+                self._vm_recent.append(vm >= VIDEO_MOTION_MIN_PX)
+                result["video_motion_px"] = round(vm, 3)
+            video_motion_pass = sum(self._vm_recent) >= VIDEO_MOTION_MIN_PASSES
         result["channel_a_pass"] = channel_a_pass
         result["channel_b_pass"] = channel_b_pass
         result["gyro_unavailable"] = gyro_unavailable
+        result["video_motion_pass"] = video_motion_pass
         result["strict"] = self.strict
-        if self.strict and not ((channel_a_pass and channel_b_pass) or (gyro_unavailable and channel_b_strong)):
+        if self.strict and not (
+            (channel_a_pass and channel_b_pass) or (gyro_unavailable and video_motion_pass and channel_b_strong)
+        ):
             allow_trust = False
         result["illum_confirmed"] = self.illum_confirmed
         result["illum_testable"] = self.illum_testable

@@ -169,4 +169,6 @@ def test_summary_both_verified_and_missing_side():
     ok = {"trust_state": "TRUSTED"}
     assert sides_summary({"caller": ok, "callee": ok}) == "caller=verified,callee=verified"
     assert sides_summary({"caller": ok}) == "caller=verified,callee=no_telemetry"
-    assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True}) == "flash_not_confirmed"
+    # a phone with no gyro: no visible camera movement -> no_motion; moving but flash unconfirmed -> flash
+    assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True}) == "no_motion"
+    assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True, "video_motion_pass": True}) == "flash_not_confirmed"

@@ -22,6 +22,13 @@ TEXTURE = 70.0 + np.repeat(
 )
 
 
+def _drifted(px):
+    """The room shifted by px pixels: the camera (phone) moved. px=0 is a phone on a table."""
+    if px == 0:
+        return TEXTURE
+    return cv2.warpAffine(TEXTURE.astype(np.float32), np.float32([[1, 0, px], [0, 1, px * 0.5]]), (W, H), borderMode=cv2.BORDER_REFLECT)
+
+
 def _face(flash, base):
     yy, xx = np.mgrid[0:H, 0:W]
     blob = np.exp(-(((yy - 60) / 38.0) ** 2 + ((xx - 80) / 45.0) ** 2))
@@ -38,7 +45,7 @@ def _flat(flash, base):
     return base
 
 
-def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=None):  # noqa: C901
+def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=None, drift=0.0):  # noqa: C901
     """strict=False: either-channel trust (these tests exercise the flash channel alone).
     motion: optional dict returned in place of the gyro-vs-camera score, i.e. a fake Channel A."""
     rng = np.random.default_rng(seed)
@@ -48,6 +55,7 @@ def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=Non
     engine.seen_color = set()  # every frame timestamp that was ever decoded in colour
     challenges = []
     states, last, passes = [], {}, []
+    frame_no = 0
     engine.passes = passes
     t = 10_000_000_000
     t_end = t + int(seconds * 1e9)
@@ -60,7 +68,8 @@ def _run(response, gray_only=False, seconds=30, seed=0, strict=False, motion=Non
                 e = il._expected_rgb_at(c, t - c["start_at_ns"])
                 if e is not None:
                     flash = e
-            base = TEXTURE + rng.normal(0, 1.0, (H, W, 3))
+            base = _drifted(frame_no * drift) + rng.normal(0, 1.0, (H, W, 3))
+            frame_no += 1
             rgb = np.clip(response(flash, base), 0, 255).astype(np.uint8)
             bgr = rgb[:, :, ::-1]
             if gray_only:
@@ -245,15 +254,24 @@ def test_either_channel_mode_still_available():
 
 # --- the two real-phone situations from the production logs -------------------------------
 
-def test_phone_without_a_gyro_verifies_on_a_confirmed_flash_alone():
-    # callee in the logs: no gyro samples at all, flash strong -> must still be able to verify
-    engine, states, last, _ = _run(_face, strict=True, motion=None)
+def test_phone_without_a_gyro_verifies_when_it_moves_and_the_flash_is_confirmed():
+    # callee in the logs: no gyro samples at all. Visible camera movement + a strong flash verifies.
+    engine, states, last, _ = _run(_face, strict=True, motion=None, drift=0.3)
     assert last["gyro_unavailable"] is True
     assert "TRUSTED" in states, states
 
 
+def test_phone_without_a_gyro_that_does_not_move_is_never_trusted():
+    # Reported bug: a phone that "didn't move a bit" still verified. No gyro + no visible
+    # movement must fail even though the flash is a perfect face response.
+    engine, states, last, _ = _run(_face, strict=True, motion=None, drift=0.0)
+    assert last["gyro_unavailable"] is True and last["video_motion_pass"] is False
+    assert engine.illum_confirmed, "the flash alone is fine; movement is what is missing"
+    assert "TRUSTED" not in states, states
+
+
 def test_phone_without_a_gyro_is_not_trusted_on_a_screen():
-    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=None)
+    engine, states, last, _ = _run(_flat_neutral_screen, strict=True, motion=None, drift=0.3)
     assert "TRUSTED" not in states, states
 
 

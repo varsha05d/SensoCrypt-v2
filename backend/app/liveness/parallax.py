@@ -93,3 +93,29 @@ def analyze(frames: list[np.ndarray]) -> dict:
         return {"parallax_ratio": None, "parallax_motion_px": motion, "cue_flat_plane": False}
     ratio = float(np.median(ratios))
     return {"parallax_ratio": ratio, "parallax_motion_px": motion, "cue_flat_plane": ratio < FLAT_PLANE_RATIO_MAX}
+
+
+def median_motion_px(frames: list[np.ndarray]) -> float | None:
+    """Whole-frame COHERENT shift (pixels per frame pair) over the given consecutive gray
+    frames: the camera's own movement, measured from video alone. Used for phones that send
+    no gyro data. None when there is too little texture to track.
+
+    Sensor noise and compression make every tracked point jitter in a random direction; real
+    camera movement shifts all of them the same way. So the per-pair shift is the vector
+    median of the point displacements (noise cancels), not the mean displacement length
+    (noise adds up: a perfectly still, noisy camera reads 0.1-0.3 px that way)."""
+    if len(frames) < 3:
+        return None
+    motions = []
+    for prev, cur in zip(frames[:-1], frames[1:]):
+        p0 = cv2.goodFeaturesToTrack(prev, mask=None, **FEATURE_PARAMS)
+        if p0 is None or len(p0) < MIN_POINTS_PER_REGION:
+            continue
+        p1, st, _ = cv2.calcOpticalFlowPyrLK(prev, cur, p0, None, **LK_PARAMS)
+        p0b, st_b, _ = cv2.calcOpticalFlowPyrLK(cur, prev, p1, None, **LK_PARAMS)
+        ok = (st.ravel() == 1) & (st_b.ravel() == 1) & (np.linalg.norm(p0 - p0b, axis=2).ravel() < 1.0)
+        if ok.sum() < MIN_POINTS_PER_REGION:
+            continue
+        d = (p1 - p0).reshape(-1, 2)[ok]
+        motions.append(float(np.hypot(np.median(d[:, 0]), np.median(d[:, 1]))))
+    return float(np.median(motions)) if motions else None

@@ -66,6 +66,7 @@ Failure reasons: `timeout`, `no_motion`, `flash_not_confirmed`, `reflection_dete
 - **Render proof:** `verdict=no_evidence` (no `S_A`), `channel_A=False`, `state=DEGRADED`; then `VERIFICATION_RESULT … reason=no_motion`.
 - **App proof:** the app asks the user to move the phone ("motion prompt"), and after 30 s shows the failure.
 - **Automated:** `test_tc05_still_phone_with_a_live_face_is_not_trusted`, `test_a_perfectly_still_phone_gives_no_evidence`.
+- **Phones with no gyroscope sensor** (common on budget phones): there is no gyro to read, so the camera image itself must visibly move (`video_motion=` in the verdict line, threshold 0.08 px per frame; a still camera reads ≤ 0.07). A still phone of this kind is rejected exactly like a gyro phone: `reason=no_motion`.
 - **Note:** this holds in the default **strict** mode (both channels required). Set `LIVENESS_STRICT=0` on Render to fall back to either-channel trust.
 
 ## TC06 — Live user completes verification within 30 s → both channels pass
