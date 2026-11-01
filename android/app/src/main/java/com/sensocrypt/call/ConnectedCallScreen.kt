@@ -117,15 +117,19 @@ private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, myS
     var isMuted by remember { mutableStateOf(false) }
     // Which video is the big one -- tapping the small picture-in-picture view swaps them.
     var mainIsLocal by remember { mutableStateOf(false) }
-    // "Verified via movement / flash" notice, shown under the secure-call badge for the first 5 seconds.
-    var showHow by remember { mutableStateOf(true) }
-    LaunchedEffect(Unit) {
-        delay(5_000)
-        showHow = false
-    }
+    // One notice under the secure-call badge: how the OTHER person was verified. Shown for 5 seconds
+    // from the moment it is known.
+    var showHow by remember { mutableStateOf(false) }
     // How the OTHER person was verified: read from the call's status (written by the server once both
     // sides are verified). A few quick retries, because that write can land a moment after the call opens.
     var otherVia by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(otherVia) {
+        if (otherVia != null) {
+            showHow = true
+            delay(5_000)
+            showHow = false
+        }
+    }
     LaunchedEffect(callId) {
         val token = UserSession(context).authToken ?: return@LaunchedEffect
         repeat(8) {
@@ -256,18 +260,17 @@ private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, myS
             VerifiedBadge()
             // "Verified via movement / flash": directly under the badge, centred, for the first 5 seconds.
             if (showHow) {
-                Spacer(Modifier.height(8.dp))
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF1B5E20).copy(alpha = 0.92f))
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text("You: ${verifiedViaMessage(verifiedVia)}", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                    otherVia?.let {
-                        Text("Other person: ${verifiedViaMessage(it)}", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                    }
+                otherVia?.let { how ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        verifiedViaMessage(how),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color(0xFF1B5E20).copy(alpha = 0.92f))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
                 }
             }
         }
