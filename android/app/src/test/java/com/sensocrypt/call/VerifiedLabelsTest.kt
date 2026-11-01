@@ -23,3 +23,24 @@ class VerifiedLabelsTest {
         assertEquals("Verified", verifiedViaMessage(null))
     }
 }
+
+class VerifiedBySideTest {
+    @Test fun readsHowEachSideWasVerified() {
+        val m = verifiedViaBySide("caller=verified_gyro,callee=verified_illumination")
+        assertEquals("gyro", m["caller"])
+        assertEquals("illumination", m["callee"])
+        assertEquals("movement", verifiedViaWord(m["caller"]))
+        assertEquals("flash", verifiedViaWord(m["callee"]))
+    }
+
+    @Test fun aSideThatDidNotVerifyOrHasNoMethodIsAbsent() {
+        assertEquals(mapOf("caller" to "accelerometer"), verifiedViaBySide("caller=verified_accelerometer,callee=no_evidence"))
+        assertEquals(emptyMap<String, String>(), verifiedViaBySide("caller=verified,callee=verified"))   // older entries
+        assertEquals(emptyMap<String, String>(), verifiedViaBySide(null))
+    }
+
+    @Test fun otherSideIsTheOppositeOne() {
+        assertEquals("callee", otherSide("caller"))
+        assertEquals("caller", otherSide("callee"))
+    }
+}

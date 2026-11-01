@@ -18,7 +18,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 @Serializable data class AcceptCallResponse(val ok: Boolean, val verify_window_s: Double)
 @Serializable data class SessionKeyRequest(val session_id: String, val side: String)
 @Serializable data class SessionKeyResponse(val wrapped_key_b64: String? = null)
-@Serializable data class CallStatusResponse(val state: String)
+@Serializable data class CallStatusResponse(val state: String, val sides: String? = null)
 @Serializable
 data class CallLogEntry(
     val call_id: String,

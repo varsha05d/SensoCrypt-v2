@@ -149,7 +149,7 @@ async def get_call_status(
     call = await db.get(Call, call_uuid)
     if call is None or user_id not in (call.caller_user_id, call.callee_user_id):
         raise HTTPException(status_code=404, detail="unknown call")
-    return CallStatusResponse(state=call.state)
+    return CallStatusResponse(state=call.state, sides=call.failure_reason)
 
 
 @router.post("/calls/{call_id}/decline")

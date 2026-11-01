@@ -32,6 +32,14 @@ FRAME_W, FRAME_H = 160, 120
 
 MIN_FRAMES = 6
 OBS_STD_FLOOR = 2.0          # 0-255 brightness units; below this the flash left no trace
+# A weak flash (small face, dim screen, bright room) moves the WHOLE-frame brightness only a little even
+# though the face region responds clearly, so a fixed brightness-swing floor discards genuine responses.
+# Below OBS_STD_FLOOR the response is still accepted, but only if it is both strongly correlated and
+# localised on a face-sized set of cells.
+CELL_STD_FLOOR = 1.0         # a cell's own brightness swing that counts as 'responding' in the weak regime
+LOCAL_RESCUE_CELLS = 6       # weak regime: need this many flash-locked cells (about an eighth of the frame)
+WEAK_R_MIN = 0.7             # weak regime: the response must correlate this well (a strong, clean signal)
+AE_MIN_CELLS = 6             # exposure-corrected measure needs this many responding cells to be trusted
 GLOBAL_R_MIN = 0.4           # global correlation needed to count as a real response at all
 CELL_CORR_MIN = 0.4          # a cell "responds" if it correlates with the flash this well
 CELL_GAIN_REL_MIN = 0.25     # ...and its gain is at least this fraction of the strongest cell's
@@ -111,6 +119,24 @@ def _gain_corr(exp: np.ndarray, obs: np.ndarray) -> tuple[float, float]:
     return gain, corr
 
 
+def _r_exposure_corrected(cell_luma: np.ndarray, exp_luma: np.ndarray) -> float | None:
+    """Flash correlation with the camera's auto-exposure divided out.
+
+    Auto-exposure scales every pixel by one common gain that moves AGAINST a bright flash, so the plain
+    whole-frame average can cancel a real face response (the lit face goes up, everything else goes
+    down). Dividing each frame by its median cell removes that common gain; the face region then
+    stands out against the background. None when too few cells respond for the result to be trusted
+    (so noise and a lone glare spot cannot produce it)."""
+    n = cell_luma.shape[0]
+    flat = cell_luma.reshape(n, -1)
+    norm = flat / np.maximum(np.median(flat, axis=1), 1.0)[:, None]
+    corrs = np.array([_safe_corr(exp_luma, norm[:, i]) for i in range(norm.shape[1])])
+    sel = corrs >= CELL_CORR_MIN
+    if int(sel.sum()) < AE_MIN_CELLS:
+        return None
+    return _safe_corr(exp_luma, norm[:, sel].mean(axis=1))
+
+
 def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
     """observed: (t_ns, BGR frame) for frames captured during the challenge window."""
     start = challenge["start_at_ns"]
@@ -125,15 +151,17 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
         if len(rows) < MIN_FRAMES:
             continue
         exp_luma = np.array([e @ _LUMA for e, _ in rows])
-        mean_luma = np.array([float((cell_cache[id(f)] @ _LUMA).mean()) for _, f in rows])
-        r = _safe_corr(exp_luma, mean_luma)
+        lag_cells = np.stack([cell_cache[id(f)] @ _LUMA for _, f in rows])      # (n, R, C)
+        r_glob = _safe_corr(exp_luma, lag_cells.mean(axis=(1, 2)))
+        r_ae = _r_exposure_corrected(lag_cells, exp_luma)
+        r = max(r_glob, r_ae) if r_ae is not None else r_glob
         if best is None or r > best[0]:
-            best = (r, lag_ms, rows)
+            best = (r, lag_ms, rows, r_glob, r_ae)
 
     if best is None:
         return {"verdict": "insufficient_frames", "S_illum": 0.0, "n": len(observed)}
 
-    r, lag_ms, rows = best
+    r, lag_ms, rows, r_global, r_ae = best
     # (r above is the global flash correlation at the best-fitting latency)
     n = len(rows)
     exp_rgb = np.stack([e for e, _ in rows])            # (n, 3)
@@ -156,15 +184,19 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
 
     cell_std = flat.std(axis=0)
     strong_cells = int(((corrs >= CELL_CORR_MIN) & (cell_std >= OBS_STD_FLOOR)).sum())
-    if global_obs.std() < OBS_STD_FLOOR:
-        # Ambient light swamped the flash: "can't tell", which is never confirmed. A tiny
-        # flash-locked patch in an otherwise flat frame is NOT escalated to a reflection --
-        # glasses lenses and shiny skin do exactly that on genuine users, and the
-        # attack it would catch can't be confirmed from a flat frame anyway.
-        return {
-            "verdict": "no_variation", "S_illum": 0.0, "n": n, "obs_std": float(global_obs.std()),
-            "localised_cells": strong_cells,
-        }
+    weak_regime = bool(global_obs.std() < OBS_STD_FLOOR)
+    if weak_regime:
+        # The whole-frame brightness barely moved. Either ambient light swamped the flash (never
+        # confirmed -- "can't tell"), or the flash is weak but the face region still tracks it.
+        # Accept only the second, and only on strong evidence: a strongly correlated response on a
+        # face-sized set of cells. A tiny flash-locked patch in an otherwise flat frame is NOT
+        # escalated to a reflection -- glasses lenses and shiny skin do exactly that on genuine users.
+        local_cells = int(((corrs >= CELL_CORR_MIN) & (cell_std >= CELL_STD_FLOOR)).sum())
+        if not (r >= WEAK_R_MIN and local_cells >= LOCAL_RESCUE_CELLS):
+            return {
+                "verdict": "no_variation", "S_illum": 0.0, "n": n, "obs_std": float(global_obs.std()),
+                "localised_cells": strong_cells, "r_global": r_global, "r_ae": r_ae,
+            }
 
     # Clipping: how much MORE of the frame is blown out during bright flashes than dark ones.
     clip = np.array([float((f.min(axis=2) >= 250).mean()) for _, f in rows])
@@ -206,6 +238,10 @@ def analyze(observed: list[tuple[int, np.ndarray]], challenge: dict) -> dict:
         "n": n,
         "lag_ms": lag_ms,
         "r": r,
+        "r_global": r_global,
+        "r_ae": r_ae,
+        "weak_regime": weak_regime,
+        "obs_std": float(global_obs.std()),
         "coverage_cells": coverage,
         "top1_share": top1_share,
         "clip_delta": clip_delta,

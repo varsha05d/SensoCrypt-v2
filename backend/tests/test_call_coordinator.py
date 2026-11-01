@@ -170,3 +170,13 @@ def test_summary_both_verified_and_missing_side():
     assert sides_summary({"caller": ok, "callee": ok}) == "caller=verified,callee=verified"
     assert sides_summary({"caller": ok}) == "caller=verified,callee=no_telemetry"
     assert side_status({"trust_state": "DEGRADED", "gyro_unavailable": True}) == "no_evidence"
+
+
+# --- the status reply carries how each side was verified (shown on the other phone) ---
+
+def test_status_reply_exposes_the_per_side_summary():
+    from app.schemas import CallStatusResponse
+
+    r = CallStatusResponse(state="VERIFIED", sides="caller=verified_gyro,callee=verified_illumination")
+    assert r.model_dump() == {"state": "VERIFIED", "sides": "caller=verified_gyro,callee=verified_illumination"}
+    assert CallStatusResponse(state="RINGING").sides is None       # older callers / no summary yet

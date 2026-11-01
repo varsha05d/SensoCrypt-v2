@@ -130,7 +130,7 @@ private sealed class Screen {
     object Profile : Screen()
     data class Incoming(val callId: String, val callerName: String) : Screen()
     data class Verifying(val callId: String, val side: String) : Screen()
-    data class Connected(val callId: String, val verifiedVia: String? = null) : Screen()
+    data class Connected(val callId: String, val verifiedVia: String? = null, val side: String = "caller") : Screen()
 }
 
 @Composable
@@ -205,11 +205,11 @@ private fun AppRoot(pendingIncomingCall: IncomingCallExtras?, onConsumedIncoming
         is Screen.Verifying -> VerifyScreen(
             callId = s.callId,
             side = s.side,
-            onVerified = { _, via -> screen = Screen.Connected(s.callId, via) },
+            onVerified = { _, via -> screen = Screen.Connected(s.callId, via, s.side) },
             onFailed = { screen = Screen.Home },
             onCancel = { screen = Screen.Home },
         )
-        is Screen.Connected -> ConnectedCallScreen(callId = s.callId, verifiedVia = s.verifiedVia, onExit = { screen = Screen.Home })
+        is Screen.Connected -> ConnectedCallScreen(callId = s.callId, verifiedVia = s.verifiedVia, mySide = s.side, onExit = { screen = Screen.Home })
     }
 }
 

@@ -105,6 +105,8 @@ class SessionKeyResponse(BaseModel):
 
 class CallStatusResponse(BaseModel):
     state: str
+    # How each side was verified once the call is verified, e.g. "caller=verified_gyro,callee=verified_illumination".
+    sides: str | None = None
 
 
 class UserProfileResponse(BaseModel):

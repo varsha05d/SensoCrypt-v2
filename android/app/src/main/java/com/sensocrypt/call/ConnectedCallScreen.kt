@@ -51,6 +51,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import android.util.Log
 import com.sensocrypt.identity.UserSession
+import com.sensocrypt.net.CallsApi
 import com.sensocrypt.net.IceApi
 import com.sensocrypt.net.SignalSocket
 import kotlinx.coroutines.delay
@@ -69,7 +70,7 @@ private val CALL_PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.perm
  * loop here anymore; that already happened. This is purely offer/answer/ICE relay + media.
  */
 @Composable
-fun ConnectedCallScreen(callId: String, verifiedVia: String? = null, onExit: () -> Unit) {
+fun ConnectedCallScreen(callId: String, verifiedVia: String? = null, mySide: String = "caller", onExit: () -> Unit) {
     val context = LocalContext.current
     var hasPermissions by remember {
         mutableStateOf(CALL_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED })
@@ -102,11 +103,11 @@ fun ConnectedCallScreen(callId: String, verifiedVia: String? = null, onExit: () 
         return
     }
 
-    ConnectedCallScreenContent(callId = callId, verifiedVia = verifiedVia, onExit = onExit)
+    ConnectedCallScreenContent(callId = callId, verifiedVia = verifiedVia, mySide = mySide, onExit = onExit)
 }
 
 @Composable
-private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, onExit: () -> Unit) {
+private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, mySide: String, onExit: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -121,6 +122,17 @@ private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, onE
     LaunchedEffect(Unit) {
         delay(5_000)
         showHow = false
+    }
+    // How the OTHER person was verified: read from the call's status (written by the server once both
+    // sides are verified). A few quick retries, because that write can land a moment after the call opens.
+    var otherVia by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(callId) {
+        val token = UserSession(context).authToken ?: return@LaunchedEffect
+        repeat(8) {
+            val sides = try { CallsApi().getCallStatus(callId, token).sides } catch (e: Exception) { null }
+            verifiedViaBySide(sides)[otherSide(mySide)]?.let { otherVia = it; return@LaunchedEffect }
+            delay(500)
+        }
     }
 
     val eglBase = remember { EglBase.create() }
@@ -245,15 +257,18 @@ private fun ConnectedCallScreenContent(callId: String, verifiedVia: String?, onE
             // "Verified via movement / flash": directly under the badge, centred, for the first 5 seconds.
             if (showHow) {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    verifiedViaMessage(verifiedVia),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
                         .background(Color(0xFF1B5E20).copy(alpha = 0.92f))
                         .padding(horizontal = 14.dp, vertical = 8.dp),
-                )
+                ) {
+                    Text("You: ${verifiedViaMessage(verifiedVia)}", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    otherVia?.let {
+                        Text("Other person: ${verifiedViaMessage(it)}", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
             }
         }
 

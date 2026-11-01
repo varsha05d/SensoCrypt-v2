@@ -239,13 +239,13 @@ private fun verifiedText(status: String): String =
     verifiedViaWord(status.removePrefix("verified_"))?.let { "verified via $it" } ?: "verified"
 
 private fun sideFailureText(reason: String): String = when (reason) {
-    "no_evidence" -> "not verified: no movement or flash response"
-    "no_motion" -> "no movement detected"
-    "flash_not_confirmed" -> "face not confirmed by the screen flash"
-    "reflection_detected" -> "screen or photo detected"
+    "no_evidence" -> "no movement or flash detected"
+    "no_motion" -> "no movement or flash detected"
+    "flash_not_confirmed" -> "no movement or flash detected"
+    "reflection_detected" -> "no movement or flash detected"
     "camera_blocked" -> "camera covered or blocked"
     "no_telemetry" -> "no camera data received"
-    "timeout" -> "not verified in time"
+    "timeout" -> "no movement or flash detected"
     else -> reason
 }
 
@@ -253,10 +253,10 @@ private fun sideFailureText(reason: String): String = when (reason) {
 private fun failureText(raw: String): String {
     val (reason, side) = raw.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "" } }
     val what = when (reason) {
-        "timeout" -> "verification timed out (30 s)"
-        "no_motion" -> "no matching phone movement"
-        "flash_not_confirmed" -> "face not confirmed by screen flash"
-        "reflection_detected" -> "screen / photo reflection detected"
+        "timeout" -> "no movement or flash detected"
+        "no_motion" -> "no movement or flash detected"
+        "flash_not_confirmed" -> "no movement or flash detected"
+        "reflection_detected" -> "no movement or flash detected"
         "camera_blocked" -> "camera covered or blocked"
         "no_telemetry" -> "no camera data received"
         else -> reason
